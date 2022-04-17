@@ -7,14 +7,18 @@
 static LGFX lcd;
 
 /* アプリ動作状態 */
-#define STAT_UNKNOWN	(0)
+#define STAT_UNKNOWN	(0)		/* ダミー状態（状態の実体は無い） */
 #define STAT_IDLE       (1)
 #define STAT_MEASURING  (2)
 #define STAT_STOPPED    (3)
 
-/* 状態遷移トリガー（ACT_INIT） */
-#define ACT_INIT		(0)
-#define ACT_RUNNING		(1)
+/* イベント */
+#define EVT_NONE			(0)
+#define EVT_INIT			(1)
+#define EVT_BTN_A_PRESSED	(2)
+#define EVT_BTN_B_PRESSED	(3)
+#define EVT_BTN_C_PRESSED	(4)
+#define EVT_TIME_EXPIRED	(5)
 
 
 #define COLOR_NORMAL		(0x00FF88U)		/* 通常の文字色               */
@@ -26,64 +30,154 @@ unsigned long g_color_clock;
 
 
 /****************************************************************************
+ * @brief 		設定時間を選択するクラス
+ */
+class TimeSelector {
+public:
+	typedef enum {
+		PRESET_TIME_2_MIN,
+		PRESET_TIME_3_MIN,
+		PRESET_TIME_5_MIN,
+		PRESET_TIME_CUSTOM,
+	} PresetTime;
+
+	/* constructor */
+	TimeSelector()
+	{
+		preset_time_ = PRESET_TIME_2_MIN;
+	}
+
+	/**/
+	void set_preset(PresetTime pt)
+	{
+		preset_time_ = pt;
+	}
+
+	/**/
+	PresetTime get()
+	{
+		return preset_time_;
+	}
+
+	/*  */
+	int get_sec()
+	{
+		int sec = 0;
+		switch(preset_time_)
+		{
+		case PRESET_TIME_2_MIN:		sec = 2 * 60;	break;
+		case PRESET_TIME_5_MIN:		sec = 3 * 60;	break;
+		case PRESET_TIME_3_MIN:		sec = 5 * 60;	break;
+		case PRESET_TIME_CUSTOM:	sec = 0 * 60;	break;
+		}
+
+		return sec;
+	}
+
+private:
+	PresetTime preset_time_;
+};
+
+
+/****************************************************************************
  * @brief 		時間計測クラス
  */
 class TimeCount {
 public:
-  /* constructor*/
-  TimeCount()
-  {
-	  reset();
-  }
+	/* constructor*/
+	TimeCount()
+	{
+		reset();
+	}
+
+	/* 時間をリセットする */
+	void reset()
+	{
+		count_sec = 0;
+	}
+
+	/* カウント時間を1秒進める */
+	void countUp()
+	{
+
+		/* min は99(分)を上限にする。その時の秒は 0秒で固定する */
+		if (count_sec < (99 * 60))
+		{
+			count_sec += 1;
+		}
+	}
+
+	/* 時間をセットする（秒単位） */
+	void set_time(unsigned int sec)
+	{
+		count_sec = sec;
+	}
+
+	/* 時間を取得する（秒単位） */
+	int get_time() const
+	{
+		return count_sec;
+	}
+
+	/* 現在のカウント時間の分の部分を取得する */
+	int get_min() const
+	{
+		return (count_sec / 60);
+	}
+
+	/* 現在のカウント時間の秒の部分を取得する */
+	int get_sec() const
+	{
+		return (count_sec % 60);
+	}
+
+private:
+  	uint16_t count_sec;	/* トータルカウント秒数 */
+};
+
+
+/****************************************************************************
+ * @brief 		時間計測の管理クラス
+ */
+class AlarmManager {
+public:
+	/* constructor */
+	AlarmManager(TimeCount &tc) : time_count_(tc)
+	{
+		reset();
+	}
 
 	/**/
 	void reset()
 	{
-		min = 0;
-		sec = 0;
-		count_sec = 0;
 		alarm_enable = false;
-		alarm_sec = 0;
 	}
-
-  /**/
-  void countUp()
-  {
-	count_sec += 1;
-	min = count_sec / 60;
-	sec = count_sec % 60;
-
-	/* min は99(分)を上限にする。その時の秒は 0秒で固定する */
-	if (99 <= min)
-	{
-		min = 99;
-		sec = 0;
-	}
-  }
 
 	/**/
-	void setAlarm(uint16_t set_sec)
+	void set_alarm(uint16_t set_sec)
 	{
 		alarm_enable = true;
-		alarm_sec = set_sec;
+		alarm_time_.set_time(set_sec);
 	}
 
 	/**/
-	bool expired()
+	bool is_expired()
 	{
-		return ((alarm_enable) && (alarm_sec <= count_sec));
+		int current_sec = time_count_.get_time();
+		int target_sec = alarm_time_.get_time();
+		return ((alarm_enable) && (target_sec <= current_sec));
 	}
 
-public:
-	int min;
-	int sec;
-  	uint16_t count_sec;	/* トータルカウント秒数 */
+private:
+	TimeCount alarm_time_;		/* アラーム時間の設定 */
+	TimeCount &time_count_;		/* 計測中の時間（参照） */
 	bool alarm_enable;
-	uint16_t alarm_sec;
 };
 
 
 TimeCount	g_time_count;
+AlarmManager g_alarm_manager(g_time_count);
+TimeSelector g_time_selector;
 
 
 /****************************************************************************
@@ -99,18 +193,18 @@ void drawTime(const TimeCount &time_count, bool light = true) {
 	if (light)
 	{
 		lcd.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
-		lcd.printf("%02d:%02d", time_count.min, time_count.sec);
+		lcd.printf("%02d:%02d", time_count.get_min(), time_count.get_sec());
 	}
 	else
 	{
 		lcd.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
-		lcd.printf("%02d", time_count.min);
+		lcd.printf("%02d", time_count.get_min());
 
 		lcd.setTextColor(COLOR_BACK_OFF, COLOR_BACK_CLOCK);
 		lcd.printf(":");
 
 		lcd.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
-		lcd.printf("%02d", time_count.sec);
+		lcd.printf("%02d", time_count.get_sec());
 	}
 }
 
@@ -178,7 +272,6 @@ void draw_timer_select()
 		int y = selector[i].pos.y;
 		int min = selector[i].time.min;
 		int sec = selector[i].time.sec;
-		const char *str = "";
 
 		lcd.setCursor(x, y);
 		lcd.setTextColor(COLOR_NORMAL, COLOR_BACK_SELECT);
@@ -187,7 +280,6 @@ void draw_timer_select()
 		{
 			min = 12;	/* TODO: shoud set to custom min. */
 			sec = 34;	/* TODO: shoud set to custom sec. */
-			str = "CUSTOM";
 			lcd.setFont(&fonts::FreeSansBold9pt7b);
 			lcd.setTextSize(1.4);
 			lcd.printf("CUSTOM");
@@ -199,17 +291,41 @@ void draw_timer_select()
 	}
 }
 
+
+/****************************************************************************
+ * @brief 		アプリ動作状態の更新（イベント処理）：Idle
+ * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
+ */
+int changestat_Idle(int event)
+{
+	int stat_new = STAT_UNKNOWN;
+
+	switch(event)
+	{
+	case EVT_BTN_B_PRESSED:
+		stat_new =  STAT_MEASURING;
+		break;
+
+	default:
+		/* (do nothing) */
+		break;
+	}
+
+	return stat_new;
+}
+
+
 /****************************************************************************
  * @brief 		アプリ動作状態処理：Idle
- * @param [in]	action - この状態内で実施する実行指示：ACT_XXX
+ * @param [in]	event - この状態内で処理するイベント：EVT_XXX
  */
-void procstat_Idle(int action)
+void procstat_Idle(int event)
 {
 	static bool flag_blink;
 	static unsigned long prev_msec;
 	unsigned long msec;
 
-	if (action == ACT_INIT)
+	if (event == EVT_INIT)
 	{
 		g_time_count.reset();
 		prev_msec = millis();
@@ -217,7 +333,6 @@ void procstat_Idle(int action)
 	}
 
 	msec = millis();
-	g_time_count.reset();
 	if (300 <= (msec - prev_msec))
 	{
 		prev_msec = msec;
@@ -225,26 +340,54 @@ void procstat_Idle(int action)
 	}
 
 	g_color_clock = flag_blink ? COLOR_NORMAL : COLOR_BACK_OFF;
-drawTime(g_time_count);
+	drawTime(g_time_count);
+}
+
+
+/****************************************************************************
+ * @brief 		アプリ動作状態の更新（イベント処理）：Measuring
+ * @return		新しい遷移先の状態
+  * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
+ */
+int changestat_Measuring(int event)
+{
+	int stat_new = STAT_UNKNOWN;
+
+	switch(event)
+	{
+	case EVT_BTN_B_PRESSED:
+		stat_new =  STAT_STOPPED;
+		break;
+
+	case EVT_TIME_EXPIRED:
+		stat_new =  STAT_STOPPED;
+		break;
+
+	default:
+		/* (do nothing) */
+		break;
+	}
+
+	return stat_new;
 }
 
 
 /****************************************************************************
  * @brief 		アプリ動作状態処理：Measuring
- * @param [in]	action - この状態内で実施する実行指示：ACT_XXX
+ * @param [in]	event - この状態内で処理するイベント：EVT_XXX
  */
-void procstat_Measuring(int action)
+void procstat_Measuring(int event)
 {
 	static bool flag_blink;
 	static unsigned long prev_msec;
 	unsigned long msec;
 
-	if (action == ACT_INIT)
+	if (event == EVT_INIT)
 	{
 		g_color_clock = COLOR_NORMAL;
 		prev_msec = millis();
 		flag_blink = true;
-		g_time_count.setAlarm(120);	/* TODO: for debug: 暫定的にアラームを固定で2分に設定してる */
+		g_alarm_manager.set_alarm(g_time_selector.get_sec());
 	}
 
 	msec = millis();
@@ -261,17 +404,40 @@ void procstat_Measuring(int action)
 
 
 /****************************************************************************
- * @brief 		アプリ動作状態処理：Stop
- * @param [in]	action - この状態内で実施する実行指示：ACT_XXX
+ * @brief 		アプリ動作状態の更新（イベント処理）：Stop
+  * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
  */
-void procstat_Stopped(int action)
+int changestat_Stop(int event)
+{
+	int stat_new = STAT_UNKNOWN;
+
+	switch(event)
+	{
+	case EVT_BTN_B_PRESSED:
+		stat_new =  STAT_IDLE;
+		break;
+
+	default:
+		/* (do nothing) */
+		break;
+	}
+
+	return stat_new;
+}
+
+
+/****************************************************************************
+ * @brief 		アプリ動作状態処理：Stop
+ * @param [in]	event - この状態内で処理するイベント：EVT_XXX
+ */
+void procstat_Stopped(int event)
 {
 	static bool flag_blink;
 	static unsigned long prev_msec;
 	static int prev_step;
 	unsigned long msec;
 
-	if (action == ACT_INIT)
+	if (event == EVT_INIT)
 	{
 		g_color_clock = COLOR_STOP;
 		prev_msec = millis();
@@ -304,32 +470,32 @@ void procstat_Stopped(int action)
 /****************************************************************************
  * @brief		現在のアプリ状態の動作を実行する
  * @param [in]	state  - 実行するアプリ動作状態：STAT_XXX
- * @param [in]	action - ACT_INIT:    状態遷移直後の初期化処理を実行する
- *						 ACT_RUNNING: 定常時の状態の処理を実行する
+ * @param [in]	event - EVT_INIT:    状態遷移直後の初期化処理を実行する
+ *						 EVT_NONE: 定常時の状態の処理を実行する
  * @note
  *   - 主に画面描画の処理を実行する。その他、時間の管理、音の出力等。
- *   - 他の状態から遷移してきた最初は ACT_INIT が渡される
+ *   - 他の状態から遷移してきた最初は EVT_INIT が渡される
  *   - 描画は lcd.startWrite() ～ lcd.endWrite() の間で実施することで高速化する。
  *     （SPIによるLCDへの画像データ転送をまとめて行うので省電力にもなる（はず））
  *     - この間にいる時は他の SPIデバイスは使えない。
  *       （→ それでも他の SPIデバイスを使いたい場合は LCD.beginTransaction()を利用する）
  */
-void proc_state(int state, int action)
+void proc_state(int state, int event)
 {
 	lcd.startWrite();
 
 	switch(state)
 	{
 	case STAT_IDLE:
-		procstat_Idle(action);
+		procstat_Idle(event);
 		break;
 
 	case STAT_MEASURING:
-		procstat_Measuring(action);
+		procstat_Measuring(event);
 		break;
 
 	case STAT_STOPPED:
-		procstat_Stopped(action);
+		procstat_Stopped(event);
 		break;
 	}
 
@@ -344,44 +510,72 @@ void proc_state(int state, int action)
 
 
 /****************************************************************************
+ * @brief 		イベントを生成する
+ * @return 		生成したイベント
+ */
+int generate_event()
+{
+	int event = EVT_NONE;
+
+	if (M5.BtnA.wasPressed())
+	{
+		event = EVT_BTN_A_PRESSED;
+	}
+	else if (M5.BtnB.wasPressed())
+	{
+		event = EVT_BTN_B_PRESSED;
+	}
+	else if (M5.BtnC.wasPressed())
+	{
+		event = EVT_BTN_C_PRESSED;
+	}
+	else if (g_alarm_manager.is_expired())
+	{
+		g_alarm_manager.reset();
+		event = EVT_TIME_EXPIRED;
+	}
+	else
+	{
+		event = EVT_NONE;
+	}	
+
+	return event;
+}
+
+
+
+/****************************************************************************
  * @brief 		状態を更新する
  * @param [in]	state - 現在の状態
  * @return 		更新後の状態
  */
-int change_state(int state)
+int change_state(int state, int event)
 {
-	int state_new = state;
+	int state_new = STAT_UNKNOWN;
 
 	switch(state)
 	{
 	case STAT_IDLE:
-		if (M5.BtnB.wasPressed())
-		{
-			state_new = STAT_MEASURING;
-		}
+		state_new = changestat_Idle(event);
 		break;
 
 	case STAT_MEASURING:
-		if (M5.BtnB.wasPressed())
-		{
-			state_new = STAT_STOPPED;
-		}
-		else if (g_time_count.expired())
-		{
-			state_new = STAT_STOPPED;
-		}
+		state_new = changestat_Measuring(event);
 		break;
 		
 	case STAT_STOPPED:
-		if (M5.BtnB.wasPressed())
-		{
-			state_new = STAT_IDLE;
-		}
+		state_new = changestat_Stop(event);
 		break;
 		
 	default:
 		/* （ここには来ない） */
 		break;
+	}
+
+	/* 遷移先に変化が無い場合 */
+	if (state_new == STAT_UNKNOWN)
+	{
+		state_new = state;
 	}
 
 	return state_new;
@@ -417,18 +611,25 @@ void setup() {
 void loop() {
 	static int state = STAT_IDLE;
 	static int prev_state = STAT_UNKNOWN;
-	static int action = ACT_INIT;
+	int event = EVT_INIT;
 
 	/* ボタン入力の状態を更新する */
 	M5.update();
 
+	/* イベントを生成する */
+	event = generate_event();
+
 	/* アプリ動作状態を更新する */
-	state = change_state(state);
+	state = change_state(state, event);
 
 	/* アプリ動作状態に変化があったら、新しい状態の初期化処理を走らせる */
-	action = (prev_state != state) ? ACT_INIT : ACT_RUNNING;
-	prev_state = state;
+	if (prev_state != state)
+	{
+		event = EVT_INIT;
+	}
 
 	/* 現在のアプリ動作状態を実行する */
-	proc_state(state, action);
+	proc_state(state, event);
+
+	prev_state = state;
 }
