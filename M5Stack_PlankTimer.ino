@@ -21,11 +21,12 @@ static LGFX lcd;
 #define EVT_TIME_EXPIRED	(5)
 
 
-#define COLOR_NORMAL		(0x00FF88U)		/* 通常の文字色               */
-#define COLOR_STOP			(0xFF0000U) 	/* タイマー停止時の文字色      */
-#define COLOR_BACK_OFF		(0x000000U)		/* 通常の背景色               */
-#define COLOR_BACK_CLOCK	(0x002244U)		/* タイマーの背景色            */
-#define COLOR_BACK_SELECT	(0x664422U)		/* 選択されている設定値の背景色 */
+#define COLOR_NORMAL			(0x00FF88U)		/* 通常の文字色                 */
+#define COLOR_STOP				(0xFF0000U) 	/* タイマー停止時の文字色        */
+#define COLOR_BACK_OFF			(0x000000U)		/* 通常の背景色                 */
+#define COLOR_BACK_CLOCK		(0x002244U)		/* タイマーの背景色              */
+#define COLOR_BACK_SELECTED		(0x999900U)		/* 選択されている設定値の背景色   */
+#define COLOR_BACK_NOT_SELECT	(0x553311U)		/* 選択されていない設定値の背景色 */
 unsigned long g_color_clock;
 
 
@@ -54,7 +55,7 @@ public:
 	}
 
 	/**/
-	PresetTime get()
+	PresetTime get_preset()
 	{
 		return preset_time_;
 	}
@@ -62,12 +63,18 @@ public:
 	/*  */
 	int get_sec()
 	{
+		return get_preset_sec(preset_time_);
+	}
+
+	/* (class function) 指定された PresetTime の時間（秒）を取得する */
+	static int get_preset_sec(PresetTime pt)
+	{
 		int sec = 0;
-		switch(preset_time_)
+		switch(pt)
 		{
 		case PRESET_TIME_2_MIN:		sec = 2 * 60;	break;
-		case PRESET_TIME_5_MIN:		sec = 3 * 60;	break;
-		case PRESET_TIME_3_MIN:		sec = 5 * 60;	break;
+		case PRESET_TIME_3_MIN:		sec = 3 * 60;	break;
+		case PRESET_TIME_5_MIN:		sec = 5 * 60;	break;
 		case PRESET_TIME_CUSTOM:	sec = 0 * 60;	break;
 		}
 
@@ -76,6 +83,7 @@ public:
 
 private:
 	PresetTime preset_time_;
+
 };
 
 
@@ -250,33 +258,37 @@ void draw_power_status()
 void draw_timer_select()
 {
 	static struct {
+		TimeSelector::PresetTime preset_time;
 		struct {
 			int x, y;
 		} pos;
-
-		struct {
-			int min, sec;
-		} time;
 	} selector[] = {
-		{{30,  170}, {  2,  0}},
-		{{130, 170}, {  3,  0}},
-		{{230, 170}, {  5,  0}},
-		{{ 80, 210}, { -1, -1}},	/* min == -1 indicates 'CUSTOM' */
+		{ TimeSelector::PRESET_TIME_2_MIN,  {  30, 170 } },
+		{ TimeSelector::PRESET_TIME_3_MIN,  { 130, 170 } },
+		{ TimeSelector::PRESET_TIME_5_MIN,  { 230, 170 } },
+		{ TimeSelector::PRESET_TIME_CUSTOM, {  80, 210 } },
 	};
 	const int NUM_SELECTOR = (sizeof(selector)/sizeof(selector[0]));
 
+	TimeSelector::PresetTime pt_cur = g_time_selector.get_preset();
+	int sec_count = g_time_selector.get_sec();
 
 	for (int i = 0; i < NUM_SELECTOR; i++)
 	{
 		int x = selector[i].pos.x;
 		int y = selector[i].pos.y;
-		int min = selector[i].time.min;
-		int sec = selector[i].time.sec;
+		TimeSelector::PresetTime pt_temp = selector[i].preset_time;
+		int sec_temp = TimeSelector::get_preset_sec(pt_temp);
+		int min = sec_temp / 60;
+		int sec = sec_temp % 60;
 
 		lcd.setCursor(x, y);
-		lcd.setTextColor(COLOR_NORMAL, COLOR_BACK_SELECT);
 
-		if (min < 0)
+		uint32_t color_back = (pt_cur == pt_temp) ? COLOR_BACK_SELECTED : COLOR_BACK_NOT_SELECT;
+		lcd.setTextColor(COLOR_NORMAL, color_back);
+
+		/* TODO: "CUSTOM" が選択されている場合は任意に設定された時間にする */
+		if (pt_temp == TimeSelector::PRESET_TIME_CUSTOM)
 		{
 			min = 12;	/* TODO: shoud set to custom min. */
 			sec = 34;	/* TODO: shoud set to custom sec. */
@@ -332,6 +344,44 @@ void procstat_Idle(int event)
 		flag_blink = true;
 	}
 
+	/* アラームの選択操作 */
+	static const struct {
+		TimeSelector::PresetTime preset_time;
+	} preset_select_tab[] = {
+		{ TimeSelector::PRESET_TIME_2_MIN  },
+		{ TimeSelector::PRESET_TIME_3_MIN  },
+		{ TimeSelector::PRESET_TIME_5_MIN  },
+		{ TimeSelector::PRESET_TIME_CUSTOM },
+	};
+	static const int NUM_PT_TAB = (sizeof(preset_select_tab) / sizeof(preset_select_tab)[0]);
+	int idx_pt;
+	TimeSelector::PresetTime pt_cur = g_time_selector.get_preset();
+
+	for (idx_pt = 0; idx_pt < NUM_PT_TAB; idx_pt++)
+	{
+		if (preset_select_tab[idx_pt].preset_time == pt_cur)
+		{
+			break;
+		}
+	}
+
+	if (idx_pt < NUM_PT_TAB)
+	{
+		int dir = 0;
+		if (event == EVT_BTN_A_PRESSED)
+		{ /* Aボタン押し → 左向きの選択 */
+			dir = -1;
+		}
+		else if (event == EVT_BTN_C_PRESSED)
+		{ /* Cボタン押し → 右向きの選択 */
+			dir = 1;
+		}
+
+		idx_pt = (idx_pt + NUM_PT_TAB + dir) % NUM_PT_TAB;
+		TimeSelector::PresetTime pt_next = preset_select_tab[idx_pt].preset_time;
+		g_time_selector.set_preset(pt_next);
+	}
+
 	msec = millis();
 	if (300 <= (msec - prev_msec))
 	{
@@ -339,8 +389,11 @@ void procstat_Idle(int event)
 		flag_blink = flag_blink ? false : true;
 	}
 
+	/* 現在選択されているアラーム時間を計測時間表示のところに出す */
 	g_color_clock = flag_blink ? COLOR_NORMAL : COLOR_BACK_OFF;
-	drawTime(g_time_count);
+	TimeCount tc_temp;
+	tc_temp.set_time(TimeSelector::get_preset_sec(pt_cur));
+	drawTime(tc_temp);
 }
 
 
