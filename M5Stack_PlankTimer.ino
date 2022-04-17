@@ -6,16 +6,16 @@
 
 static LGFX lcd;
 
+/* アプリ動作状態 */
+#define STAT_UNKNOWN	(0)
+#define STAT_IDLE       (1)
+#define STAT_MEASURING  (2)
+#define STAT_STOPPED    (3)
 
-#define STAT_IDLE       (0)
-#define STAT_MEASURING  (1)
-#define STAT_STOPPED    (2)
-
+/* 状態遷移トリガー（ACT_INIT） */
 #define ACT_INIT		(0)
 #define ACT_RUNNING		(1)
 
-
-int g_state;
 
 #define COLOR_NORMAL		(0x00FF88U)		/* 通常の文字色               */
 #define COLOR_STOP			(0xFF0000U) 	/* タイマー停止時の文字色      */
@@ -24,6 +24,10 @@ int g_state;
 #define COLOR_BACK_SELECT	(0x664422U)		/* 選択されている設定値の背景色 */
 unsigned long g_color_clock;
 
+
+/****************************************************************************
+ * @brief 		時間計測クラス
+ */
 class TimeCount {
 public:
   /* constructor*/
@@ -81,30 +85,12 @@ public:
 
 TimeCount	g_time_count;
 
-/****************************************************************************/
-void setup() {
-	/* LovyanLauncher対応：起動時にボタンAが押されていたらランチャーに戻る */
-	if (digitalRead(BUTTON_A_PIN) == 0)
-	{
-	updateFromFS(SD);   //SDカードの "menu.bin" を読み込み
-	ESP.restart();      // 再起動
-	}
 
-	lcd.init();
-	lcd.setRotation(1);
-	lcd.setBrightness(128);
-	lcd.setColorDepth(16);  // RGB565の16ビットに設定
-
-	Serial.begin(115200);
-
-	g_state = STAT_IDLE;
-
-	M5.Speaker.begin();
-	M5.Power.begin();
-}
-
-
-/****************************************************************************/
+/****************************************************************************
+ * @brief 		計測時間を描画する
+ * @param [in]	time_count - 計測時間
+ * @param [in]	light      - 点滅状態（true: 点灯）
+ */
 void drawTime(const TimeCount &time_count, bool light = true) {
 	lcd.setCursor(10, 40);
 	lcd.setFont(&fonts::Font7);
@@ -129,7 +115,9 @@ void drawTime(const TimeCount &time_count, bool light = true) {
 }
 
 
-/****************************************************************************/
+/****************************************************************************
+ * @brief 		バッテリー状態を描画する
+ */
 void draw_power_status()
 {
 	lcd.setCursor(2, 2);
@@ -161,7 +149,10 @@ void draw_power_status()
 	}
 }
 
-/****************************************************************************/
+
+/****************************************************************************
+ * @brief 		設定時間の選択肢を描画する
+ */
 void draw_timer_select()
 {
 	static struct {
@@ -208,8 +199,11 @@ void draw_timer_select()
 	}
 }
 
-/****************************************************************************/
-void stateproc_Idle(int action)
+/****************************************************************************
+ * @brief 		アプリ動作状態処理：Idle
+ * @param [in]	action - この状態内で実施する実行指示：ACT_XXX
+ */
+void procstat_Idle(int action)
 {
 	static bool flag_blink;
 	static unsigned long prev_msec;
@@ -235,8 +229,11 @@ drawTime(g_time_count);
 }
 
 
-/****************************************************************************/
-void stateproc_Measuring(int action)
+/****************************************************************************
+ * @brief 		アプリ動作状態処理：Measuring
+ * @param [in]	action - この状態内で実施する実行指示：ACT_XXX
+ */
+void procstat_Measuring(int action)
 {
 	static bool flag_blink;
 	static unsigned long prev_msec;
@@ -263,8 +260,11 @@ void stateproc_Measuring(int action)
 }
 
 
-/****************************************************************************/
-void stateproc_Stopped(int action)
+/****************************************************************************
+ * @brief 		アプリ動作状態処理：Stop
+ * @param [in]	action - この状態内で実施する実行指示：ACT_XXX
+ */
+void procstat_Stopped(int action)
 {
 	static bool flag_blink;
 	static unsigned long prev_msec;
@@ -301,69 +301,134 @@ void stateproc_Stopped(int action)
 }
 
 
-/****************************************************************************/
-void loop() {
-	static int prev_state = STAT_IDLE;
-	static int action = ACT_INIT;
+/****************************************************************************
+ * @brief		現在のアプリ状態の動作を実行する
+ * @param [in]	state  - 実行するアプリ動作状態：STAT_XXX
+ * @param [in]	action - ACT_INIT:    状態遷移直後の初期化処理を実行する
+ *						 ACT_RUNNING: 定常時の状態の処理を実行する
+ * @note
+ *   - 主に画面描画の処理を実行する。その他、時間の管理、音の出力等。
+ *   - 他の状態から遷移してきた最初は ACT_INIT が渡される
+ *   - 描画は lcd.startWrite() ～ lcd.endWrite() の間で実施することで高速化する。
+ *     （SPIによるLCDへの画像データ転送をまとめて行うので省電力にもなる（はず））
+ *     - この間にいる時は他の SPIデバイスは使えない。
+ *       （→ それでも他の SPIデバイスを使いたい場合は LCD.beginTransaction()を利用する）
+ */
+void proc_state(int state, int action)
+{
+	lcd.startWrite();
 
-	prev_state = g_state;
+	switch(state)
+	{
+	case STAT_IDLE:
+		procstat_Idle(action);
+		break;
 
-	M5.update();
+	case STAT_MEASURING:
+		procstat_Measuring(action);
+		break;
 
-	switch(g_state)
+	case STAT_STOPPED:
+		procstat_Stopped(action);
+		break;
+	}
+
+	/* バッテリーの状態（充電中、バッテリーレベル） */
+	draw_power_status();
+
+	/* タイマー時間の選択肢 */
+	draw_timer_select();
+
+	lcd.endWrite();
+}
+
+
+/****************************************************************************
+ * @brief 		状態を更新する
+ * @param [in]	state - 現在の状態
+ * @return 		更新後の状態
+ */
+int change_state(int state)
+{
+	int state_new = state;
+
+	switch(state)
 	{
 	case STAT_IDLE:
 		if (M5.BtnB.wasPressed())
 		{
-			g_state = STAT_MEASURING;
+			state_new = STAT_MEASURING;
 		}
 		break;
 
 	case STAT_MEASURING:
 		if (M5.BtnB.wasPressed())
 		{
-			g_state = STAT_STOPPED;
+			state_new = STAT_STOPPED;
 		}
 		else if (g_time_count.expired())
 		{
-			g_state = STAT_STOPPED;
+			state_new = STAT_STOPPED;
 		}
 		break;
 		
 	case STAT_STOPPED:
 		if (M5.BtnB.wasPressed())
 		{
-			g_state = STAT_IDLE;
+			state_new = STAT_IDLE;
 		}
 		break;
 		
 	default:
+		/* （ここには来ない） */
 		break;
 	}
 
+	return state_new;
+}
 
-	if (prev_state != g_state)
+
+/****************************************************************************
+ * @brief 		Arduino関数：初期化
+ */
+void setup() {
+	/* LovyanLauncher対応：起動時にボタンAが押されていたらランチャーに戻る */
+	if (digitalRead(BUTTON_A_PIN) == 0)
 	{
-		action = ACT_INIT;
+	updateFromFS(SD);   //SDカードの "menu.bin" を読み込み
+	ESP.restart();      // 再起動
 	}
 
-	switch(g_state)
-	{
-	case STAT_IDLE:
-		stateproc_Idle(action);
-		break;
+	lcd.init();
+	lcd.setRotation(1);
+	lcd.setBrightness(128);
+	lcd.setColorDepth(16);  // RGB565の16ビットに設定
 
-	case STAT_MEASURING:
-		stateproc_Measuring(action);
-		break;
+	Serial.begin(115200);
 
-	case STAT_STOPPED:
-		stateproc_Stopped(action);
-		break;
-	}
+	M5.Speaker.begin();
+	M5.Power.begin();
+}
 
-	action = ACT_RUNNING;
 
-	draw_power_status();
-	draw_timer_select();
+/****************************************************************************
+ * @brief 		Arduino関数：定常動作時の処理
+ */
+void loop() {
+	static int state = STAT_IDLE;
+	static int prev_state = STAT_UNKNOWN;
+	static int action = ACT_INIT;
+
+	/* ボタン入力の状態を更新する */
+	M5.update();
+
+	/* アプリ動作状態を更新する */
+	state = change_state(state);
+
+	/* アプリ動作状態に変化があったら、新しい状態の初期化処理を走らせる */
+	action = (prev_state != state) ? ACT_INIT : ACT_RUNNING;
+	prev_state = state;
+
+	/* 現在のアプリ動作状態を実行する */
+	proc_state(state, action);
 }
