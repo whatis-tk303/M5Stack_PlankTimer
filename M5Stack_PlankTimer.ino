@@ -11,6 +11,7 @@ static LGFX lcd;
 #define STAT_IDLE       (1)
 #define STAT_MEASURING  (2)
 #define STAT_STOPPED    (3)
+#define STAT_CUSTOM_SETTING	(4)
 
 /* イベント */
 #define EVT_NONE			(0)
@@ -19,6 +20,12 @@ static LGFX lcd;
 #define EVT_BTN_B_PRESSED	(3)
 #define EVT_BTN_C_PRESSED	(4)
 #define EVT_TIME_EXPIRED	(5)
+#define EVT_BTN_A_RELEASED		(6)
+#define EVT_BTN_B_RELEASED		(7)
+#define EVT_BTN_C_RELEASED		(8)
+#define EVT_BTN_A_LONG_PRESSED	(9)
+#define EVT_BTN_B_LONG_PRESSED	(10)
+#define EVT_BTN_C_LONG_PRESSED	(11)
 
 
 #define COLOR_NORMAL			(0x00FF88U)		/* 通常の文字色                 */
@@ -75,7 +82,7 @@ public:
 		case PRESET_TIME_2_MIN:		sec = 2 * 60;	break;
 		case PRESET_TIME_3_MIN:		sec = 3 * 60;	break;
 		case PRESET_TIME_5_MIN:		sec = 5 * 60;	break;
-		case PRESET_TIME_CUSTOM:	sec = 0 * 60;	break;
+		case PRESET_TIME_CUSTOM:	sec = (12 * 60) + 34;	break;
 		}
 
 		return sec;
@@ -290,8 +297,6 @@ void draw_timer_select()
 		/* TODO: "CUSTOM" が選択されている場合は任意に設定された時間にする */
 		if (pt_temp == TimeSelector::PRESET_TIME_CUSTOM)
 		{
-			min = 12;	/* TODO: shoud set to custom min. */
-			sec = 34;	/* TODO: shoud set to custom sec. */
 			lcd.setFont(&fonts::FreeSansBold9pt7b);
 			lcd.setTextSize(1.4);
 			lcd.printf("CUSTOM");
@@ -311,11 +316,26 @@ void draw_timer_select()
 int changestat_Idle(int event)
 {
 	int stat_new = STAT_UNKNOWN;
+	bool is_selected_custom = (g_time_selector.get_preset() == TimeSelector::PRESET_TIME_CUSTOM);
 
 	switch(event)
 	{
 	case EVT_BTN_B_PRESSED:
-		stat_new =  STAT_MEASURING;
+		if (!is_selected_custom)
+		{
+			stat_new =  STAT_MEASURING;
+		}
+		break;
+
+	case EVT_BTN_B_RELEASED:
+		if (is_selected_custom)
+		{
+			stat_new =  STAT_MEASURING;
+		}
+		break;
+
+	case EVT_BTN_B_LONG_PRESSED:
+		stat_new = STAT_CUSTOM_SETTING;
 		break;
 
 	default:
@@ -431,26 +451,31 @@ int changestat_Measuring(int event)
  */
 void procstat_Measuring(int event)
 {
-	static bool flag_blink;
-	static unsigned long prev_msec;
+	static unsigned long expired_msec;
+	
+	bool flag_blink;
 	unsigned long msec;
 
 	if (event == EVT_INIT)
 	{
 		g_color_clock = COLOR_NORMAL;
-		prev_msec = millis();
+		prev_msec = expired_msec = millis();
+		expired_msec += 1000;
 		flag_blink = true;
 		g_alarm_manager.set_alarm(g_time_selector.get_sec());
 	}
 
 	msec = millis();
-	unsigned long diff_time = msec - prev_msec;
-	flag_blink = (diff_time < 500) ? true : false;
-	if (1000 <= diff_time)
+
+	if (expired_msec <= msec)
 	{
-		prev_msec = msec;
+		expired_msec += 1000;
 		g_time_count.countUp();
 	}
+
+	unsigned long prev_msec = expired_msec - 1000;
+	unsigned long past_time = msec - prev_msec;
+	flag_blink = (past_time < 500) ? true : false;
 
 	drawTime(g_time_count, flag_blink);
 }
@@ -466,7 +491,9 @@ int changestat_Stop(int event)
 
 	switch(event)
 	{
-	case EVT_BTN_B_PRESSED:
+	/* 「CUSTOM」が選択されている場合にすぐに計測に遷移しないようにするため RELEASED で遷移させる
+	 *	（他の状態中の場合でも弊害は無いので同じ操作になるようにする） */
+	case EVT_BTN_B_RELEASED:
 		stat_new =  STAT_IDLE;
 		break;
 
@@ -517,6 +544,61 @@ void procstat_Stopped(int event)
 		uint32_t duration = 50;
 		M5.Speaker.tone(frequency, duration);
 	}
+}
+
+
+/****************************************************************************
+ * @brief 		アプリ動作状態の更新（イベント処理）：Stop
+  * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
+ */
+int changestat_CustomSetting(int event)
+{
+	int stat_new = STAT_UNKNOWN;
+
+	switch(event)
+	{
+	case EVT_BTN_B_PRESSED:
+		stat_new =  STAT_IDLE;
+		break;
+
+	default:
+		/* (do nothing) */
+		break;
+	}
+
+	return stat_new;
+}
+
+
+/****************************************************************************
+ * @brief 		アプリ動作状態処理：CustomSetting
+ * @param [in]	event - この状態内で処理するイベント：EVT_XXX
+ */
+void procstat_CustomSetting(int event)
+{
+	static bool flag_blink;
+	static unsigned long prev_msec;
+	static int prev_step;
+	unsigned long msec;
+
+	if (event == EVT_INIT)
+	{
+		g_color_clock = COLOR_STOP;
+		prev_msec = millis();
+		flag_blink = true;
+		prev_step = -1;
+	}
+
+	msec = millis();
+	unsigned long past = msec - prev_msec;
+	if (500 <= past)
+	{
+		prev_msec = msec;
+		flag_blink = flag_blink ? false : true;
+	}
+
+	g_color_clock = flag_blink ? COLOR_STOP : COLOR_NORMAL;
+	drawTime(g_time_count);
 }
 
 
@@ -582,6 +664,14 @@ int generate_event()
 	{
 		event = EVT_BTN_C_PRESSED;
 	}
+	else if (M5.BtnB.wasReleased())
+	{
+		event = EVT_BTN_B_RELEASED;
+	}
+	else if (M5.BtnB.pressedFor(2000))
+	{ /* 真ん中のボタン（B）が2秒間長押しされた */
+		event = EVT_BTN_B_LONG_PRESSED;
+	}	
 	else if (g_alarm_manager.is_expired())
 	{
 		g_alarm_manager.reset();
@@ -619,7 +709,11 @@ int change_state(int state, int event)
 	case STAT_STOPPED:
 		state_new = changestat_Stop(event);
 		break;
-		
+
+	case STAT_CUSTOM_SETTING:
+		state_new = changestat_CustomSetting(event);
+		break;
+
 	default:
 		/* （ここには来ない） */
 		break;
