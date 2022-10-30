@@ -4,37 +4,49 @@
 #define LGFX_AUTODETECT // 自動認識 (M5Stack, M5StickC/CPlus, ODROID-GO, TTGO T-Watch, TTGO T-Wristband, LoLin D32 Pro, ESP-WROVER-KIT)
 #include <LovyanGFX.hpp>
 
-static LGFX lcd;
+LGFX lcd;
 
 /* アプリ動作状態 */
-#define STAT_UNKNOWN	(0)		/* ダミー状態（状態の実体は無い） */
-#define STAT_IDLE       (1)
-#define STAT_MEASURING  (2)
-#define STAT_STOPPED    (3)
-#define STAT_CUSTOM_SETTING	(4)
+enum {
+	STAT_UNKNOWN,			/* ダミー状態（状態の実体は無い） */
+	STAT_IDLE,				/* 設定時間選択                   */
+	STAT_MEASURING,			/* 計測中                         */
+	STAT_STOPPED,			/* 計測終了                       */
+	STAT_CUSTOM_SETTING,	/* カスタム設定時間の変更         */
+};
 
 /* イベント */
-#define EVT_NONE			(0)
-#define EVT_INIT			(1)
-#define EVT_BTN_A_PRESSED	(2)
-#define EVT_BTN_B_PRESSED	(3)
-#define EVT_BTN_C_PRESSED	(4)
-#define EVT_TIME_EXPIRED	(5)
-#define EVT_BTN_A_RELEASED		(6)
-#define EVT_BTN_B_RELEASED		(7)
-#define EVT_BTN_C_RELEASED		(8)
-#define EVT_BTN_A_LONG_PRESSED	(9)
-#define EVT_BTN_B_LONG_PRESSED	(10)
-#define EVT_BTN_C_LONG_PRESSED	(11)
+enum {
+	EVT_NONE,
+	EVT_INIT,
+	EVT_BTN_A_PRESSED,
+	EVT_BTN_B_PRESSED,
+	EVT_BTN_C_PRESSED,
+	EVT_TIME_EXPIRED,
+	EVT_BTN_A_RELEASED,
+	EVT_BTN_B_RELEASED,
+	EVT_BTN_C_RELEASED,
+	EVT_BTN_A_LONG_PRESSED,
+	EVT_BTN_B_LONG_PRESSED,
+	EVT_BTN_C_LONG_PRESSED,
+};
 
+/* definition of colors */
+static const uint32_t COLOR_NORMAL			= 0x00FF88U;	/* 通常の文字色                   */
+static const uint32_t COLOR_STOP			= 0xFF0000U; 	/* タイマー停止時の文字色         */
+static const uint32_t COLOR_BACK_OFF		= 0x000000U;	/* 通常の背景色                   */
+static const uint32_t COLOR_BACK_CLOCK		= 0x002244U;	/* タイマーの背景色               */
+static const uint32_t COLOR_BACK_SELECTED	= 0x999900U;	/* 選択されている設定値の背景色   */
+static const uint32_t COLOR_BACK_NOT_SELECT	= 0x553311U;	/* 選択されていない設定値の背景色 */
+static const uint32_t COLOR_CUSTOM_SETTING	= 0x999900U;	/* カスタム設定時の文字色         */
+static const uint32_t COLOR_BATT_CHARGING	= 0x990000U;	/* バッテリー充電中の文字色       */
 
-#define COLOR_NORMAL			(0x00FF88U)		/* 通常の文字色                 */
-#define COLOR_STOP				(0xFF0000U) 	/* タイマー停止時の文字色        */
-#define COLOR_BACK_OFF			(0x000000U)		/* 通常の背景色                 */
-#define COLOR_BACK_CLOCK		(0x002244U)		/* タイマーの背景色              */
-#define COLOR_BACK_SELECTED		(0x999900U)		/* 選択されている設定値の背景色   */
-#define COLOR_BACK_NOT_SELECT	(0x553311U)		/* 選択されていない設定値の背景色 */
+/** 設定時間の色 */
 unsigned long g_color_clock;
+
+/** カスタム設定時間 [sec] */
+unsigned long g_custom_time;
+bool g_is_long_pressed;
 
 
 /****************************************************************************
@@ -82,7 +94,7 @@ public:
 		case PRESET_TIME_2_MIN:		sec = 2 * 60;	break;
 		case PRESET_TIME_3_MIN:		sec = 3 * 60;	break;
 		case PRESET_TIME_5_MIN:		sec = 5 * 60;	break;
-		case PRESET_TIME_CUSTOM:	sec = (12 * 60) + 34;	break;
+		case PRESET_TIME_CUSTOM:	sec = g_custom_time;	break;
 		}
 
 		return sec;
@@ -90,7 +102,6 @@ public:
 
 private:
 	PresetTime preset_time_;
-
 };
 
 
@@ -238,22 +249,27 @@ void draw_power_status()
 	{
 		const char *str_charge = "???";
 		int8_t bat_level = -1;
+		uint32_t color;
 
 		if (M5.Power.isCharging())
 		{
 			str_charge = "Charging";
+			color = COLOR_BATT_CHARGING;
 		}
 		else
 		{
 			str_charge = M5.Power.isChargeFull() ? "BattFULL" : "Battery";
+			color = COLOR_NORMAL;
 		}
 
 		bat_level = M5.Power.getBatteryLevel();
 
+		lcd.setTextColor(color, COLOR_BACK_OFF);
 		lcd.printf("%8s:%03d%%", str_charge, bat_level);
 	}
 	else
 	{
+		lcd.setTextColor(COLOR_BACK_CLOCK, COLOR_BACK_OFF);
 		lcd.printf("%8s:---%%", "Battery");
 	}
 }
@@ -310,6 +326,19 @@ void draw_timer_select()
 
 
 /****************************************************************************
+ * @brief 		カスタム時間設定の操作ガイドを表示する
+ */
+void draw_custom_ope_guid()
+{
+	lcd.setFont(&fonts::FreeSansBold9pt7b);
+	lcd.setTextSize(2.0);
+	lcd.setTextColor(COLOR_NORMAL, COLOR_BACK_OFF);
+	lcd.setCursor(40, 190);
+	lcd.printf("[-]   [Start]   [+]");
+}
+
+
+/****************************************************************************
  * @brief 		アプリ動作状態の更新（イベント処理）：Idle
  * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
  */
@@ -321,21 +350,7 @@ int changestat_Idle(int event)
 	switch(event)
 	{
 	case EVT_BTN_B_PRESSED:
-		if (!is_selected_custom)
-		{
-			stat_new =  STAT_MEASURING;
-		}
-		break;
-
-	case EVT_BTN_B_RELEASED:
-		if (is_selected_custom)
-		{
-			stat_new =  STAT_MEASURING;
-		}
-		break;
-
-	case EVT_BTN_B_LONG_PRESSED:
-		stat_new = STAT_CUSTOM_SETTING;
+		stat_new = is_selected_custom ? STAT_CUSTOM_SETTING : STAT_MEASURING;
 		break;
 
 	default:
@@ -419,8 +434,7 @@ void procstat_Idle(int event)
 
 /****************************************************************************
  * @brief 		アプリ動作状態の更新（イベント処理）：Measuring
- * @return		新しい遷移先の状態
-  * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
+ * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
  */
 int changestat_Measuring(int event)
 {
@@ -452,7 +466,8 @@ int changestat_Measuring(int event)
 void procstat_Measuring(int event)
 {
 	static unsigned long expired_msec;
-	
+	static unsigned long prev_msec;
+
 	bool flag_blink;
 	unsigned long msec;
 
@@ -473,7 +488,7 @@ void procstat_Measuring(int event)
 		g_time_count.countUp();
 	}
 
-	unsigned long prev_msec = expired_msec - 1000;
+	prev_msec = expired_msec - 1000;
 	unsigned long past_time = msec - prev_msec;
 	flag_blink = (past_time < 500) ? true : false;
 
@@ -483,7 +498,7 @@ void procstat_Measuring(int event)
 
 /****************************************************************************
  * @brief 		アプリ動作状態の更新（イベント処理）：Stop
-  * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
+ * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
  */
 int changestat_Stop(int event)
 {
@@ -549,22 +564,67 @@ void procstat_Stopped(int event)
 
 /****************************************************************************
  * @brief 		アプリ動作状態の更新（イベント処理）：Stop
-  * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
+ * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
  */
 int changestat_CustomSetting(int event)
 {
+	static const unsigned long INTERVAL_LONG_PRESS = 300;	/* for interval of button pressed while long time [msec] */
+	static const unsigned long DIFF_TIME_PRESSED = 60;
+	static const unsigned long DIFF_TIME_LONG_PRESSED = 600;
+	static const signed long LIMIT_TIME_LOWER = (1 * 60);	/* lower limit:  1 [min] */
+	static const signed long LIMIT_TIME_UPPER = (99 * 60);	/* upper limit: 99 [min] */
+
+	static unsigned long last_millis = 0;
+	unsigned long now_millis;
 	int stat_new = STAT_UNKNOWN;
+	signed long updated_time = (signed long) g_custom_time;
+
+	g_is_long_pressed = false;
+	now_millis = millis();
 
 	switch(event)
 	{
 	case EVT_BTN_B_PRESSED:
-		stat_new =  STAT_IDLE;
+		stat_new =  STAT_MEASURING;
+		break;
+
+	case EVT_BTN_A_PRESSED:
+		updated_time -= DIFF_TIME_PRESSED;
+		break;
+
+	case EVT_BTN_A_LONG_PRESSED:
+		g_is_long_pressed = true;
+		if (INTERVAL_LONG_PRESS < (now_millis - last_millis)) {
+			updated_time -= DIFF_TIME_LONG_PRESSED;
+			last_millis = now_millis;
+		}
+		break;
+
+	case EVT_BTN_C_PRESSED:
+		updated_time += DIFF_TIME_PRESSED;
+		break;
+
+	case EVT_BTN_C_LONG_PRESSED:
+		g_is_long_pressed = true;
+		if (INTERVAL_LONG_PRESS < (now_millis - last_millis)) {
+			updated_time += DIFF_TIME_LONG_PRESSED;
+			last_millis = now_millis;
+		}
 		break;
 
 	default:
 		/* (do nothing) */
 		break;
 	}
+
+	if (updated_time < LIMIT_TIME_LOWER) {
+		updated_time = LIMIT_TIME_LOWER;
+	}
+	else if (LIMIT_TIME_UPPER < updated_time) {
+		updated_time = LIMIT_TIME_UPPER;
+	}
+
+	g_custom_time = (unsigned long)updated_time;
 
 	return stat_new;
 }
@@ -578,7 +638,6 @@ void procstat_CustomSetting(int event)
 {
 	static bool flag_blink;
 	static unsigned long prev_msec;
-	static int prev_step;
 	unsigned long msec;
 
 	if (event == EVT_INIT)
@@ -586,7 +645,6 @@ void procstat_CustomSetting(int event)
 		g_color_clock = COLOR_STOP;
 		prev_msec = millis();
 		flag_blink = true;
-		prev_step = -1;
 	}
 
 	msec = millis();
@@ -597,8 +655,12 @@ void procstat_CustomSetting(int event)
 		flag_blink = flag_blink ? false : true;
 	}
 
-	g_color_clock = flag_blink ? COLOR_STOP : COLOR_NORMAL;
-	drawTime(g_time_count);
+	/* カスタム設定時間を表示する（黄色文字、点滅なし） */
+	g_color_clock = COLOR_CUSTOM_SETTING;
+	TimeCount tc_temp;
+	TimeSelector::PresetTime pt_cur = g_time_selector.get_preset();
+	tc_temp.set_time(TimeSelector::get_preset_sec(pt_cur));
+	drawTime(tc_temp);
 }
 
 
@@ -632,13 +694,25 @@ void proc_state(int state, int event)
 	case STAT_STOPPED:
 		procstat_Stopped(event);
 		break;
+
+	case STAT_CUSTOM_SETTING:
+		procstat_CustomSetting(event);
+		break;
 	}
 
 	/* バッテリーの状態（充電中、バッテリーレベル） */
 	draw_power_status();
 
 	/* タイマー時間の選択肢 */
-	draw_timer_select();
+	lcd.fillRect(0, 170, 320, 240, COLOR_BACK_OFF);
+	if (state == STAT_CUSTOM_SETTING)
+	{
+		draw_custom_ope_guid();
+	}
+	else
+	{
+		draw_timer_select();
+	}
 
 	lcd.endWrite();
 }
@@ -668,9 +742,17 @@ int generate_event()
 	{
 		event = EVT_BTN_B_RELEASED;
 	}
-	else if (M5.BtnB.pressedFor(2000))
-	{ /* 真ん中のボタン（B）が2秒間長押しされた */
+	else if (M5.BtnA.pressedFor(1000))
+	{ /* 左のボタン（A）が1秒間長押しされた */
+		event = EVT_BTN_A_LONG_PRESSED;
+	}	
+	else if (M5.BtnB.pressedFor(1000))
+	{ /* 真ん中のボタン（B）が1秒間長押しされた */
 		event = EVT_BTN_B_LONG_PRESSED;
+	}	
+	else if (M5.BtnC.pressedFor(1000))
+	{ /* 右のボタン（C）が1秒間長押しされた */
+		event = EVT_BTN_C_LONG_PRESSED;
 	}	
 	else if (g_alarm_manager.is_expired())
 	{
@@ -742,13 +824,16 @@ void setup() {
 
 	lcd.init();
 	lcd.setRotation(1);
-	lcd.setBrightness(128);
+	lcd.setBrightness(64);
 	lcd.setColorDepth(16);  // RGB565の16ビットに設定
 
 	Serial.begin(115200);
 
 	M5.Speaker.begin();
 	M5.Power.begin();
+
+	/* カスタム設定時間：デフォルト 10分 */
+	g_custom_time = (10 * 60);
 }
 
 
@@ -758,15 +843,15 @@ void setup() {
 void loop() {
 	static int state = STAT_IDLE;
 	static int prev_state = STAT_UNKNOWN;
-	int event = EVT_INIT;
+	int event; // = EVT_INIT;
 
 	/* ボタン入力の状態を更新する */
 	M5.update();
 
-	/* イベントを生成する */
+	/* イベントを生成する（ボタン押し、タイマー満了、etc.） */
 	event = generate_event();
 
-	/* アプリ動作状態を更新する */
+	/* イベントに応じてアプリ動作状態を更新する */
 	state = change_state(state, event);
 
 	/* アプリ動作状態に変化があったら、新しい状態の初期化処理を走らせる */
