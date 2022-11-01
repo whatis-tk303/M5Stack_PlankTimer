@@ -4,7 +4,10 @@
 #define LGFX_AUTODETECT // 自動認識 (M5Stack, M5StickC/CPlus, ODROID-GO, TTGO T-Watch, TTGO T-Wristband, LoLin D32 Pro, ESP-WROVER-KIT)
 #include <LovyanGFX.hpp>
 
-LGFX lcd;
+LGFX lcd_real;
+LGFX_Sprite sprite1(&lcd_real);		/* 分割描画バッファ１ */
+LGFX_Sprite sprite2(&lcd_real);		/* 分割描画バッファ２ */
+LGFX_Sprite &lcd = sprite1;
 
 /* アプリ動作状態 */
 enum {
@@ -48,6 +51,8 @@ unsigned long g_color_clock;
 unsigned long g_custom_time;
 bool g_is_long_pressed;
 
+/** ブリンク表示用タイミングフラグ*/
+bool g_flag_blink;
 
 /****************************************************************************
  * @brief 		設定時間を選択するクラス
@@ -211,26 +216,26 @@ TimeSelector g_time_selector;
  * @param [in]	time_count - 計測時間
  * @param [in]	light      - 点滅状態（true: 点灯）
  */
-void drawTime(const TimeCount &time_count, bool light = true) {
-	lcd.setCursor(10, 40);
-	lcd.setFont(&fonts::Font7);
-	lcd.setTextSize(2.2);
+void draw_time(LGFX_Sprite &sprite, int y_offset, const TimeCount &time_count, bool light = true) {
+	sprite.setCursor(10, 40 - y_offset);
+	sprite.setFont(&fonts::Font7);
+	sprite.setTextSize(2.2);
 
 	if (light)
 	{
-		lcd.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
-		lcd.printf("%02d:%02d", time_count.get_min(), time_count.get_sec());
+		sprite.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
+		sprite.printf("%02d:%02d", time_count.get_min(), time_count.get_sec());
 	}
 	else
 	{
-		lcd.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
-		lcd.printf("%02d", time_count.get_min());
+		sprite.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
+		sprite.printf("%02d", time_count.get_min());
 
-		lcd.setTextColor(COLOR_BACK_OFF, COLOR_BACK_CLOCK);
-		lcd.printf(":");
+		sprite.setTextColor(COLOR_BACK_OFF, COLOR_BACK_CLOCK);
+		sprite.printf(":");
 
-		lcd.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
-		lcd.printf("%02d", time_count.get_sec());
+		sprite.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
+		sprite.printf("%02d", time_count.get_sec());
 	}
 }
 
@@ -238,12 +243,12 @@ void drawTime(const TimeCount &time_count, bool light = true) {
 /****************************************************************************
  * @brief 		バッテリー状態を描画する
  */
-void draw_power_status()
+void draw_power_status(LGFX_Sprite &sprite, int y_offset)
 {
-	lcd.setCursor(2, 2);
-	lcd.setFont(&fonts::FreeSansBold9pt7b);
-	lcd.setTextSize(1.0);
-	lcd.setTextColor(COLOR_NORMAL, COLOR_BACK_OFF);
+	sprite.setCursor(2, 2 - y_offset);
+	sprite.setFont(&fonts::FreeSansBold9pt7b);
+	sprite.setTextSize(1.0);
+	sprite.setTextColor(COLOR_NORMAL, COLOR_BACK_OFF);
 
 	if (M5.Power.canControl())
 	{
@@ -264,13 +269,13 @@ void draw_power_status()
 
 		bat_level = M5.Power.getBatteryLevel();
 
-		lcd.setTextColor(color, COLOR_BACK_OFF);
-		lcd.printf("%8s:%03d%%", str_charge, bat_level);
+		sprite.setTextColor(color, COLOR_BACK_OFF);
+		sprite.printf("%8s:%03d%%", str_charge, bat_level);
 	}
 	else
 	{
-		lcd.setTextColor(COLOR_BACK_CLOCK, COLOR_BACK_OFF);
-		lcd.printf("%8s:---%%", "Battery");
+		sprite.setTextColor(COLOR_BACK_CLOCK, COLOR_BACK_OFF);
+		sprite.printf("%8s:---%%", "Battery");
 	}
 }
 
@@ -278,7 +283,7 @@ void draw_power_status()
 /****************************************************************************
  * @brief 		設定時間の選択肢を描画する
  */
-void draw_timer_select()
+void draw_timer_select(LGFX_Sprite &sprite, int y_offset)
 {
 	static struct {
 		TimeSelector::PresetTime preset_time;
@@ -305,22 +310,22 @@ void draw_timer_select()
 		int min = sec_temp / 60;
 		int sec = sec_temp % 60;
 
-		lcd.setCursor(x, y);
+		sprite.setCursor(x, y - y_offset);
 
 		uint32_t color_back = (pt_cur == pt_temp) ? COLOR_BACK_SELECTED : COLOR_BACK_NOT_SELECT;
-		lcd.setTextColor(COLOR_NORMAL, color_back);
+		sprite.setTextColor(COLOR_NORMAL, color_back);
 
 		/* TODO: "CUSTOM" が選択されている場合は任意に設定された時間にする */
 		if (pt_temp == TimeSelector::PRESET_TIME_CUSTOM)
 		{
-			lcd.setFont(&fonts::FreeSansBold9pt7b);
-			lcd.setTextSize(1.4);
-			lcd.printf("CUSTOM");
+			sprite.setFont(&fonts::FreeSansBold9pt7b);
+			sprite.setTextSize(1.4);
+			sprite.printf("CUSTOM");
 		}
 
-		lcd.setFont(&fonts::Font7);
-		lcd.setTextSize(0.5);
-		lcd.printf(" %02d:%02d ", min, sec);
+		sprite.setFont(&fonts::Font7);
+		sprite.setTextSize(0.5);
+		sprite.printf(" %02d:%02d ", min, sec);
 	}
 }
 
@@ -328,13 +333,13 @@ void draw_timer_select()
 /****************************************************************************
  * @brief 		カスタム時間設定の操作ガイドを表示する
  */
-void draw_custom_ope_guid()
+void draw_custom_ope_guid(LGFX_Sprite &sprite, int y_offset)
 {
-	lcd.setFont(&fonts::FreeSansBold9pt7b);
-	lcd.setTextSize(2.0);
-	lcd.setTextColor(COLOR_NORMAL, COLOR_BACK_OFF);
-	lcd.setCursor(40, 190);
-	lcd.printf("[-]   [Start]   [+]");
+	sprite.setFont(&fonts::FreeSansBold9pt7b);
+	sprite.setTextSize(2.0);
+	sprite.setTextColor(COLOR_NORMAL, COLOR_BACK_OFF);
+	sprite.setCursor(40, 190 - y_offset);
+	sprite.printf("[-]   [Start]   [+]");
 }
 
 
@@ -368,7 +373,6 @@ int changestat_Idle(int event)
  */
 void procstat_Idle(int event)
 {
-	static bool flag_blink;
 	static unsigned long prev_msec;
 	unsigned long msec;
 
@@ -376,7 +380,7 @@ void procstat_Idle(int event)
 	{
 		g_time_count.reset();
 		prev_msec = millis();
-		flag_blink = true;
+		g_flag_blink = true;
 	}
 
 	/* アラームの選択操作 */
@@ -421,14 +425,25 @@ void procstat_Idle(int event)
 	if (300 <= (msec - prev_msec))
 	{
 		prev_msec = msec;
-		flag_blink = flag_blink ? false : true;
+		g_flag_blink = g_flag_blink ? false : true;
 	}
+}
 
+
+/****************************************************************************
+ * @brief 		アプリ動作状態の描画：Idle
+ * @param [in]	sprite   - 描画対象Sprite
+ * @param [in]	y_offset - 画面分割描画のためのY方向オフセット（この分を引いて（上にずらして）描画する）
+ * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
+ */
+void drawstat_Idle(LGFX_Sprite &sprite, int y_offset)
+{
 	/* 現在選択されているアラーム時間を計測時間表示のところに出す */
-	g_color_clock = flag_blink ? COLOR_NORMAL : COLOR_BACK_OFF;
+	g_color_clock = g_flag_blink ? COLOR_NORMAL : COLOR_BACK_OFF;
+	TimeSelector::PresetTime pt_cur = g_time_selector.get_preset();
 	TimeCount tc_temp;
 	tc_temp.set_time(TimeSelector::get_preset_sec(pt_cur));
-	drawTime(tc_temp);
+	draw_time(sprite, y_offset, tc_temp);
 }
 
 
@@ -468,7 +483,6 @@ void procstat_Measuring(int event)
 	static unsigned long expired_msec;
 	static unsigned long prev_msec;
 
-	bool flag_blink;
 	unsigned long msec;
 
 	if (event == EVT_INIT)
@@ -476,7 +490,7 @@ void procstat_Measuring(int event)
 		g_color_clock = COLOR_NORMAL;
 		prev_msec = expired_msec = millis();
 		expired_msec += 1000;
-		flag_blink = true;
+		g_flag_blink = true;
 		g_alarm_manager.set_alarm(g_time_selector.get_sec());
 	}
 
@@ -490,11 +504,20 @@ void procstat_Measuring(int event)
 
 	prev_msec = expired_msec - 1000;
 	unsigned long past_time = msec - prev_msec;
-	flag_blink = (past_time < 500) ? true : false;
-
-	drawTime(g_time_count, flag_blink);
+	g_flag_blink = (past_time < 500) ? true : false;
 }
 
+
+/****************************************************************************
+ * @brief 		アプリ動作状態の描画：Measuring
+ * @param [in]	sprite   - 描画対象Sprite
+ * @param [in]	y_offset - 画面分割描画のためのY方向オフセット（この分を引いて（上にずらして）描画する）
+ * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
+ */
+void drawstat_Measuring(LGFX_Sprite &sprite, int y_offset)
+{
+	draw_time(sprite, y_offset, g_time_count, g_flag_blink);
+}
 
 /****************************************************************************
  * @brief 		アプリ動作状態の更新（イベント処理）：Stop
@@ -527,7 +550,6 @@ int changestat_Stop(int event)
  */
 void procstat_Stopped(int event)
 {
-	static bool flag_blink;
 	static unsigned long prev_msec;
 	static int prev_step;
 	unsigned long msec;
@@ -536,7 +558,7 @@ void procstat_Stopped(int event)
 	{
 		g_color_clock = COLOR_STOP;
 		prev_msec = millis();
-		flag_blink = true;
+		g_flag_blink = true;
 		prev_step = -1;
 	}
 
@@ -545,11 +567,8 @@ void procstat_Stopped(int event)
 	if (500 <= past)
 	{
 		prev_msec = msec;
-		flag_blink = flag_blink ? false : true;
+		g_flag_blink = g_flag_blink ? false : true;
 	}
-
-	g_color_clock = flag_blink ? COLOR_STOP : COLOR_NORMAL;
-	drawTime(g_time_count);
 
 	int step = past / 150;
 	if ((step < 2) & (step != prev_step))
@@ -561,6 +580,18 @@ void procstat_Stopped(int event)
 	}
 }
 
+
+/****************************************************************************
+ * @brief 		アプリ動作状態の描画：Stopped
+ * @param [in]	sprite   - 描画対象Sprite
+ * @param [in]	y_offset - 画面分割描画のためのY方向オフセット（この分を引いて（上にずらして）描画する）
+ * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
+ */
+void drawstat_Stopped(LGFX_Sprite &sprite, int y_offset)
+{
+	g_color_clock = g_flag_blink ? COLOR_STOP : COLOR_NORMAL;
+	draw_time(sprite, y_offset, g_time_count);
+}
 
 /****************************************************************************
  * @brief 		アプリ動作状態の更新（イベント処理）：Stop
@@ -636,7 +667,6 @@ int changestat_CustomSetting(int event)
  */
 void procstat_CustomSetting(int event)
 {
-	static bool flag_blink;
 	static unsigned long prev_msec;
 	unsigned long msec;
 
@@ -644,7 +674,7 @@ void procstat_CustomSetting(int event)
 	{
 		g_color_clock = COLOR_STOP;
 		prev_msec = millis();
-		flag_blink = true;
+		g_flag_blink = true;
 	}
 
 	msec = millis();
@@ -652,17 +682,26 @@ void procstat_CustomSetting(int event)
 	if (500 <= past)
 	{
 		prev_msec = msec;
-		flag_blink = flag_blink ? false : true;
+		g_flag_blink = g_flag_blink ? false : true;
 	}
+}
 
+
+/****************************************************************************
+ * @brief 		アプリ動作状態の描画：CustomSetting
+ * @param [in]	sprite   - 描画対象Sprite
+ * @param [in]	y_offset - 画面分割描画のためのY方向オフセット（この分を引いて（上にずらして）描画する）
+ * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
+ */
+void drawstat_CustomSetting(LGFX_Sprite &sprite, int y_offset)
+{
 	/* カスタム設定時間を表示する（黄色文字、点滅なし） */
 	g_color_clock = COLOR_CUSTOM_SETTING;
 	TimeCount tc_temp;
 	TimeSelector::PresetTime pt_cur = g_time_selector.get_preset();
 	tc_temp.set_time(TimeSelector::get_preset_sec(pt_cur));
-	drawTime(tc_temp);
+	draw_time(sprite, y_offset, tc_temp);
 }
-
 
 /****************************************************************************
  * @brief		現在のアプリ状態の動作を実行する
@@ -679,42 +718,59 @@ void procstat_CustomSetting(int event)
  */
 void proc_state(int state, int event)
 {
-	lcd.startWrite();
+	void (*p_drawstat)(LGFX_Sprite &, int);
 
 	switch(state)
 	{
 	case STAT_IDLE:
 		procstat_Idle(event);
+		p_drawstat = drawstat_Idle;
 		break;
 
 	case STAT_MEASURING:
 		procstat_Measuring(event);
+		p_drawstat = drawstat_Measuring;
 		break;
 
 	case STAT_STOPPED:
 		procstat_Stopped(event);
+		p_drawstat = drawstat_Stopped;
 		break;
 
 	case STAT_CUSTOM_SETTING:
 		procstat_CustomSetting(event);
+		p_drawstat = drawstat_CustomSetting;
 		break;
 	}
+	
+	lcd_real.startWrite();
 
-	/* バッテリーの状態（充電中、バッテリーレベル） */
-	draw_power_status();
+	/* 画面描画（分割描画のため分割数分を繰り返している） */
+	for (int i = 0; i <= 1; i++) {
+		LGFX_Sprite &sprite = (i == 0) ? sprite1 : sprite2;
+		int y_offset = (i == 0) ? 0 : 120;
 
-	/* タイマー時間の選択肢 */
-	lcd.fillRect(0, 170, 320, 240, COLOR_BACK_OFF);
-	if (state == STAT_CUSTOM_SETTING)
-	{
-		draw_custom_ope_guid();
+		/* 各状態を描画する */
+		p_drawstat(sprite, y_offset);
+
+		/* バッテリーの状態（充電中、バッテリーレベル） */
+		draw_power_status(sprite, y_offset);
+
+		/* タイマー時間の選択肢 */
+		sprite.fillRect(0, 170 - y_offset, 320, (240-170), COLOR_BACK_OFF);
+		if (state == STAT_CUSTOM_SETTING)
+		{
+			draw_custom_ope_guid(sprite, y_offset);
+		}
+		else
+		{
+			draw_timer_select(sprite, y_offset);
+		}
+
+		sprite.pushSprite(0, y_offset);
 	}
-	else
-	{
-		draw_timer_select();
-	}
 
-	lcd.endWrite();
+	lcd_real.endWrite();
 }
 
 
@@ -768,7 +824,6 @@ int generate_event()
 }
 
 
-
 /****************************************************************************
  * @brief 		状態を更新する
  * @param [in]	state - 現在の状態
@@ -818,14 +873,23 @@ void setup() {
 	/* LovyanLauncher対応：起動時にボタンAが押されていたらランチャーに戻る */
 	if (digitalRead(BUTTON_A_PIN) == 0)
 	{
-	updateFromFS(SD);   //SDカードの "menu.bin" を読み込み
-	ESP.restart();      // 再起動
+		updateFromFS(SD);   //SDカードの "menu.bin" を読み込み
+		ESP.restart();      // 再起動
 	}
 
-	lcd.init();
-	lcd.setRotation(1);
-	lcd.setBrightness(64);
-	lcd.setColorDepth(16);  // RGB565の16ビットに設定
+	/* LCD（デバイス）の初期化 */
+	lcd_real.init();
+	lcd_real.setRotation(1);
+	lcd_real.setBrightness(64);
+	lcd_real.setColorDepth(16);  // RGB565の16ビットに設定
+
+	/* バッファ画面（LCDと同サイズを2分割したもの）の初期化 */
+	/* 1枚目のスプライトの初期化 */
+	sprite1.setColorDepth(lcd_real.getColorDepth());
+	sprite1.createSprite(lcd_real.width(), (lcd_real.height() / 2));
+	/* 2枚目のスプライトの初期化 */
+	sprite2.setColorDepth(lcd_real.getColorDepth());
+	sprite2.createSprite(lcd_real.width(), (lcd_real.height() / 2));
 
 	Serial.begin(115200);
 
