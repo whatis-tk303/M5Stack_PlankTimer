@@ -44,20 +44,67 @@ static const uint32_t COLOR_BACK_NOT_SELECT	= 0x553311U;	/* 選択されてい�
 static const uint32_t COLOR_CUSTOM_SETTING	= 0x999900U;	/* カスタム設定時の文字色         */
 static const uint32_t COLOR_BATT_CHARGING	= 0x990000U;	/* バッテリー充電中の文字色       */
 
-/** 設定時間の色 */
-unsigned long g_color_clock;
+/****************************************************************************
+ * @brief 		カスタム時間クラス
+ */
+class CustomTime
+{
+public:
+	/* constructor */
+	CustomTime(unsigned long sec_lower_limit, unsigned long sec_upper_limit, unsigned long sec_init)
+	{
+		limit_time_lower_ = sec_lower_limit;
+		limit_time_upper_ = sec_upper_limit;
+		custom_time_ = sec_init;
+	}
 
-/** カスタム設定時間 [sec] */
-unsigned long g_custom_time;
-bool g_is_long_pressed;
+	/**/
+	unsigned long get_sec()
+	{
+		return custom_time_;
+	}
 
-/** ブリンク表示用タイミングフラグ*/
-bool g_flag_blink;
+	/**/
+	void increase_sec(unsigned long sec)
+	{
+		custom_time_ += sec;
+		custom_time_ = truncate_time(custom_time_);
+	}
+
+	/**/
+	void decrease_sec(unsigned long sec)
+	{
+		custom_time_ = ((sec < custom_time_) ? (custom_time_ - sec) : 0);
+		custom_time_ = truncate_time(custom_time_);
+	}
+
+private:
+	unsigned long limit_time_lower_;
+	unsigned long limit_time_upper_;
+	unsigned long custom_time_;	
+
+	/**/
+	unsigned long truncate_time(unsigned long sec)
+	{
+		unsigned long updated_time = sec;
+
+		if (updated_time < limit_time_lower_) {
+			updated_time = limit_time_lower_;
+		}
+		else if (limit_time_upper_ < updated_time) {
+			updated_time = limit_time_upper_;
+		}
+
+		return updated_time;
+	}
+};
+
 
 /****************************************************************************
  * @brief 		設定時間を選択するクラス
  */
-class TimeSelector {
+class TimeSelector
+{
 public:
 	typedef enum {
 		PRESET_TIME_2_MIN,
@@ -67,8 +114,9 @@ public:
 	} PresetTime;
 
 	/* constructor */
-	TimeSelector()
+	TimeSelector(CustomTime &custom_time) : custom_time_(custom_time)
 	{
+		/* プリセット時間の選択肢：デフォルト 2分 */
 		preset_time_ = PRESET_TIME_2_MIN;
 	}
 
@@ -84,14 +132,20 @@ public:
 		return preset_time_;
 	}
 
+	/**/
+	bool is_selected_custom()
+	{
+		return (preset_time_ == PRESET_TIME_CUSTOM);
+	}
+
 	/*  */
 	int get_sec()
 	{
 		return get_preset_sec(preset_time_);
 	}
 
-	/* (class function) 指定された PresetTime の時間（秒）を取得する */
-	static int get_preset_sec(PresetTime pt)
+	/* 指定された PresetTime の時間（秒）を取得する */
+	int get_preset_sec(PresetTime pt)
 	{
 		int sec = 0;
 		switch(pt)
@@ -99,7 +153,7 @@ public:
 		case PRESET_TIME_2_MIN:		sec = 2 * 60;	break;
 		case PRESET_TIME_3_MIN:		sec = 3 * 60;	break;
 		case PRESET_TIME_5_MIN:		sec = 5 * 60;	break;
-		case PRESET_TIME_CUSTOM:	sec = g_custom_time;	break;
+		case PRESET_TIME_CUSTOM:	sec = custom_time_.get_sec();	break;
 		}
 
 		return sec;
@@ -107,13 +161,15 @@ public:
 
 private:
 	PresetTime preset_time_;
+	CustomTime &custom_time_;
 };
 
 
 /****************************************************************************
  * @brief 		時間計測クラス
  */
-class TimeCount {
+class TimeCount
+{
 public:
 	/* constructor*/
 	TimeCount()
@@ -170,7 +226,8 @@ private:
 /****************************************************************************
  * @brief 		時間計測の管理クラス
  */
-class AlarmManager {
+class AlarmManager
+{
 public:
 	/* constructor */
 	AlarmManager(TimeCount &tc) : time_count_(tc)
@@ -206,9 +263,50 @@ private:
 };
 
 
-TimeCount	g_time_count;
+/* 経過時間計測クラス */
+class ClockInterval
+{
+public:
+	/* constructor*/
+	ClockInterval(unsigned long (msec_func)(void))
+	{
+		get_cur_msec_ = msec_func;
+		msec_prev_ = 0;
+	}
+
+	void mark()
+	{
+		msec_prev_ = get_cur_msec_();
+	}
+
+	bool is_past(unsigned long interval)
+	{
+		unsigned long msec_now = get_cur_msec_();
+		unsigned long msec_expired = msec_prev_ + interval;
+
+		return (msec_expired <= msec_now);
+	}
+
+private:
+	unsigned long (*get_cur_msec_)(void);	/* 経過時間を msec で返す関数へのポインタ */
+	unsigned long msec_prev_;
+};
+
+
+/* カウントダウンタイマーのドメインオブジェクト */
+TimeCount	 g_time_count;
 AlarmManager g_alarm_manager(g_time_count);
-TimeSelector g_time_selector;
+CustomTime   g_custom_time((1 * 60), (99 * 60), (10 * 60));	/* range: 1..99 [min], default:10 [min] */
+TimeSelector g_time_selector(g_custom_time);
+
+/** 設定時間の色 */
+unsigned long g_color_clock;
+
+/** カスタム設定時間 [sec] */
+bool g_is_long_pressed;
+
+/** ブリンク表示用タイミングフラグ*/
+bool g_flag_blink;
 
 
 /****************************************************************************
@@ -306,7 +404,7 @@ void draw_timer_select(LGFX_Sprite &sprite, int y_offset)
 		int x = selector[i].pos.x;
 		int y = selector[i].pos.y;
 		TimeSelector::PresetTime pt_temp = selector[i].preset_time;
-		int sec_temp = TimeSelector::get_preset_sec(pt_temp);
+		int sec_temp = g_time_selector.get_preset_sec(pt_temp);
 		int min = sec_temp / 60;
 		int sec = sec_temp % 60;
 
@@ -315,7 +413,6 @@ void draw_timer_select(LGFX_Sprite &sprite, int y_offset)
 		uint32_t color_back = (pt_cur == pt_temp) ? COLOR_BACK_SELECTED : COLOR_BACK_NOT_SELECT;
 		sprite.setTextColor(COLOR_NORMAL, color_back);
 
-		/* TODO: "CUSTOM" が選択されている場合は任意に設定された時間にする */
 		if (pt_temp == TimeSelector::PRESET_TIME_CUSTOM)
 		{
 			sprite.setFont(&fonts::FreeSansBold9pt7b);
@@ -350,12 +447,11 @@ void draw_custom_ope_guid(LGFX_Sprite &sprite, int y_offset)
 int changestat_Idle(int event)
 {
 	int stat_new = STAT_UNKNOWN;
-	bool is_selected_custom = (g_time_selector.get_preset() == TimeSelector::PRESET_TIME_CUSTOM);
 
 	switch(event)
 	{
 	case EVT_BTN_B_PRESSED:
-		stat_new = is_selected_custom ? STAT_CUSTOM_SETTING : STAT_MEASURING;
+		stat_new = g_time_selector.is_selected_custom() ? STAT_CUSTOM_SETTING : STAT_MEASURING;
 		break;
 
 	default:
@@ -373,13 +469,12 @@ int changestat_Idle(int event)
  */
 void procstat_Idle(int event)
 {
-	static unsigned long prev_msec;
-	unsigned long msec;
+	static ClockInterval interval(millis);
 
 	if (event == EVT_INIT)
 	{
 		g_time_count.reset();
-		prev_msec = millis();
+		interval.mark();
 		g_flag_blink = true;
 	}
 
@@ -421,10 +516,9 @@ void procstat_Idle(int event)
 		g_time_selector.set_preset(pt_next);
 	}
 
-	msec = millis();
-	if (300 <= (msec - prev_msec))
+	if (interval.is_past(300))
 	{
-		prev_msec = msec;
+		interval.mark();
 		g_flag_blink = g_flag_blink ? false : true;
 	}
 }
@@ -442,7 +536,7 @@ void drawstat_Idle(LGFX_Sprite &sprite, int y_offset)
 	g_color_clock = g_flag_blink ? COLOR_NORMAL : COLOR_BACK_OFF;
 	TimeSelector::PresetTime pt_cur = g_time_selector.get_preset();
 	TimeCount tc_temp;
-	tc_temp.set_time(TimeSelector::get_preset_sec(pt_cur));
+	tc_temp.set_time(g_time_selector.get_preset_sec(pt_cur));
 	draw_time(sprite, y_offset, tc_temp);
 }
 
@@ -480,31 +574,23 @@ int changestat_Measuring(int event)
  */
 void procstat_Measuring(int event)
 {
-	static unsigned long expired_msec;
-	static unsigned long prev_msec;
-
-	unsigned long msec;
+	static ClockInterval interval(millis);
 
 	if (event == EVT_INIT)
 	{
 		g_color_clock = COLOR_NORMAL;
-		prev_msec = expired_msec = millis();
-		expired_msec += 1000;
+		interval.mark();
 		g_flag_blink = true;
 		g_alarm_manager.set_alarm(g_time_selector.get_sec());
 	}
 
-	msec = millis();
+	g_flag_blink = interval.is_past(500) ? false : true;
 
-	if (expired_msec <= msec)
+	if (interval.is_past(1000))
 	{
-		expired_msec += 1000;
+		interval.mark();
 		g_time_count.countUp();
 	}
-
-	prev_msec = expired_msec - 1000;
-	unsigned long past_time = msec - prev_msec;
-	g_flag_blink = (past_time < 500) ? true : false;
 }
 
 
@@ -550,33 +636,39 @@ int changestat_Stop(int event)
  */
 void procstat_Stopped(int event)
 {
-	static unsigned long prev_msec;
-	static int prev_step;
-	unsigned long msec;
+	static const uint16_t BUZZ_FREQUENCY = 880;
+	static const uint32_t BUZZ_DURATION  = 50;
+
+	static ClockInterval interval(millis);
+	static ClockInterval interval_2nd_buzzer(millis);
+	static int count_buzzer;
 
 	if (event == EVT_INIT)
 	{
 		g_color_clock = COLOR_STOP;
-		prev_msec = millis();
+		interval.mark();
+
+		interval_2nd_buzzer.mark();
+		count_buzzer = 1;
+		M5.Speaker.tone(BUZZ_FREQUENCY, BUZZ_DURATION);
+
 		g_flag_blink = true;
-		prev_step = -1;
 	}
 
-	msec = millis();
-	unsigned long past = msec - prev_msec;
-	if (500 <= past)
+	if (interval.is_past(500))
 	{
-		prev_msec = msec;
+		interval.mark();
 		g_flag_blink = g_flag_blink ? false : true;
+
+		interval_2nd_buzzer.mark();
+		count_buzzer += 1;
+		M5.Speaker.tone(BUZZ_FREQUENCY, BUZZ_DURATION);
 	}
 
-	int step = past / 150;
-	if ((step < 2) & (step != prev_step))
+	if ((count_buzzer == 1) && interval_2nd_buzzer.is_past(150))
 	{
-		prev_step = step;
-		uint16_t frequency = 880;
-		uint32_t duration = 50;
-		M5.Speaker.tone(frequency, duration);
+		count_buzzer = 0;
+		M5.Speaker.tone(BUZZ_FREQUENCY, BUZZ_DURATION);
 	}
 }
 
@@ -602,13 +694,10 @@ int changestat_CustomSetting(int event)
 	static const unsigned long INTERVAL_LONG_PRESS = 300;	/* for interval of button pressed while long time [msec] */
 	static const unsigned long DIFF_TIME_PRESSED = 60;
 	static const unsigned long DIFF_TIME_LONG_PRESSED = 600;
-	static const signed long LIMIT_TIME_LOWER = (1 * 60);	/* lower limit:  1 [min] */
-	static const signed long LIMIT_TIME_UPPER = (99 * 60);	/* upper limit: 99 [min] */
 
 	static unsigned long last_millis = 0;
 	unsigned long now_millis;
 	int stat_new = STAT_UNKNOWN;
-	signed long updated_time = (signed long) g_custom_time;
 
 	g_is_long_pressed = false;
 	now_millis = millis();
@@ -620,25 +709,25 @@ int changestat_CustomSetting(int event)
 		break;
 
 	case EVT_BTN_A_PRESSED:
-		updated_time -= DIFF_TIME_PRESSED;
+		g_custom_time.decrease_sec(DIFF_TIME_PRESSED);
 		break;
 
 	case EVT_BTN_A_LONG_PRESSED:
 		g_is_long_pressed = true;
 		if (INTERVAL_LONG_PRESS < (now_millis - last_millis)) {
-			updated_time -= DIFF_TIME_LONG_PRESSED;
+			g_custom_time.decrease_sec(DIFF_TIME_LONG_PRESSED);
 			last_millis = now_millis;
 		}
 		break;
 
 	case EVT_BTN_C_PRESSED:
-		updated_time += DIFF_TIME_PRESSED;
+		g_custom_time.increase_sec(DIFF_TIME_PRESSED);
 		break;
 
 	case EVT_BTN_C_LONG_PRESSED:
 		g_is_long_pressed = true;
 		if (INTERVAL_LONG_PRESS < (now_millis - last_millis)) {
-			updated_time += DIFF_TIME_LONG_PRESSED;
+			g_custom_time.increase_sec(DIFF_TIME_LONG_PRESSED);
 			last_millis = now_millis;
 		}
 		break;
@@ -647,15 +736,6 @@ int changestat_CustomSetting(int event)
 		/* (do nothing) */
 		break;
 	}
-
-	if (updated_time < LIMIT_TIME_LOWER) {
-		updated_time = LIMIT_TIME_LOWER;
-	}
-	else if (LIMIT_TIME_UPPER < updated_time) {
-		updated_time = LIMIT_TIME_UPPER;
-	}
-
-	g_custom_time = (unsigned long)updated_time;
 
 	return stat_new;
 }
@@ -667,22 +747,8 @@ int changestat_CustomSetting(int event)
  */
 void procstat_CustomSetting(int event)
 {
-	static unsigned long prev_msec;
-	unsigned long msec;
-
 	if (event == EVT_INIT)
 	{
-		g_color_clock = COLOR_STOP;
-		prev_msec = millis();
-		g_flag_blink = true;
-	}
-
-	msec = millis();
-	unsigned long past = msec - prev_msec;
-	if (500 <= past)
-	{
-		prev_msec = msec;
-		g_flag_blink = g_flag_blink ? false : true;
 	}
 }
 
@@ -699,7 +765,7 @@ void drawstat_CustomSetting(LGFX_Sprite &sprite, int y_offset)
 	g_color_clock = COLOR_CUSTOM_SETTING;
 	TimeCount tc_temp;
 	TimeSelector::PresetTime pt_cur = g_time_selector.get_preset();
-	tc_temp.set_time(TimeSelector::get_preset_sec(pt_cur));
+	tc_temp.set_time(g_time_selector.get_preset_sec(pt_cur));
 	draw_time(sprite, y_offset, tc_temp);
 }
 
@@ -745,10 +811,16 @@ void proc_state(int state, int event)
 	
 	lcd_real.startWrite();
 
-	/* 画面描画（分割描画のため分割数分を繰り返している） */
+	/* 画面描画（分割描画のため分割数分を繰り返している）
+	 * オフスクリーンに描画してからLCDへ転送するｘ分割数 */
+	int32_t width = lcd_real.width();
+	int32_t height = lcd_real.height() / 2;
+
 	for (int i = 0; i <= 1; i++) {
 		LGFX_Sprite &sprite = (i == 0) ? sprite1 : sprite2;
 		int y_offset = (i == 0) ? 0 : 120;
+
+		sprite.fillRect(0, 0, width, height, COLOR_BACK_OFF);
 
 		/* 各状態を描画する */
 		p_drawstat(sprite, y_offset);
@@ -757,7 +829,6 @@ void proc_state(int state, int event)
 		draw_power_status(sprite, y_offset);
 
 		/* タイマー時間の選択肢 */
-		sprite.fillRect(0, 170 - y_offset, 320, (240-170), COLOR_BACK_OFF);
 		if (state == STAT_CUSTOM_SETTING)
 		{
 			draw_custom_ope_guid(sprite, y_offset);
@@ -780,47 +851,30 @@ void proc_state(int state, int event)
  */
 int generate_event()
 {
-	int event = EVT_NONE;
+	if (M5.BtnA.wasPressed()) { return EVT_BTN_A_PRESSED; }
 
-	if (M5.BtnA.wasPressed())
-	{
-		event = EVT_BTN_A_PRESSED;
-	}
-	else if (M5.BtnB.wasPressed())
-	{
-		event = EVT_BTN_B_PRESSED;
-	}
-	else if (M5.BtnC.wasPressed())
-	{
-		event = EVT_BTN_C_PRESSED;
-	}
-	else if (M5.BtnB.wasReleased())
-	{
-		event = EVT_BTN_B_RELEASED;
-	}
-	else if (M5.BtnA.pressedFor(1000))
-	{ /* 左のボタン（A）が1秒間長押しされた */
-		event = EVT_BTN_A_LONG_PRESSED;
-	}	
-	else if (M5.BtnB.pressedFor(1000))
-	{ /* 真ん中のボタン（B）が1秒間長押しされた */
-		event = EVT_BTN_B_LONG_PRESSED;
-	}	
-	else if (M5.BtnC.pressedFor(1000))
-	{ /* 右のボタン（C）が1秒間長押しされた */
-		event = EVT_BTN_C_LONG_PRESSED;
-	}	
-	else if (g_alarm_manager.is_expired())
+	if (M5.BtnB.wasPressed()) { return EVT_BTN_B_PRESSED; }
+
+	if (M5.BtnC.wasPressed()) { return EVT_BTN_C_PRESSED; }
+
+	if (M5.BtnB.wasReleased()) { return EVT_BTN_B_RELEASED; }
+
+	/* 左のボタン（A）が1秒間長押しされた */
+	if (M5.BtnA.pressedFor(1000)) { return EVT_BTN_A_LONG_PRESSED; }
+
+	 /* 真ん中のボタン（B）が1秒間長押しされた */
+	if (M5.BtnB.pressedFor(1000)) {return EVT_BTN_B_LONG_PRESSED; }	
+
+	/* 右のボタン（C）が1秒間長押しされた */
+	if (M5.BtnC.pressedFor(1000)) { return EVT_BTN_C_LONG_PRESSED; }
+
+	if (g_alarm_manager.is_expired())
 	{
 		g_alarm_manager.reset();
-		event = EVT_TIME_EXPIRED;
+		return EVT_TIME_EXPIRED;
 	}
-	else
-	{
-		event = EVT_NONE;
-	}	
 
-	return event;
+	return EVT_NONE;
 }
 
 
@@ -852,7 +906,7 @@ int change_state(int state, int event)
 		break;
 
 	default:
-		/* （ここには来ない） */
+		state_new = STAT_IDLE;
 		break;
 	}
 
@@ -895,9 +949,6 @@ void setup() {
 
 	M5.Speaker.begin();
 	M5.Power.begin();
-
-	/* カスタム設定時間：デフォルト 10分 */
-	g_custom_time = (10 * 60);
 }
 
 
@@ -905,9 +956,9 @@ void setup() {
  * @brief 		Arduino関数：定常動作時の処理
  */
 void loop() {
-	static int state = STAT_IDLE;
-	static int prev_state = STAT_UNKNOWN;
-	int event; // = EVT_INIT;
+	static int state_prev = STAT_UNKNOWN;
+	int state_next;
+	int event;
 
 	/* ボタン入力の状態を更新する */
 	M5.update();
@@ -916,16 +967,16 @@ void loop() {
 	event = generate_event();
 
 	/* イベントに応じてアプリ動作状態を更新する */
-	state = change_state(state, event);
+	state_next = change_state(state_prev, event);
 
 	/* アプリ動作状態に変化があったら、新しい状態の初期化処理を走らせる */
-	if (prev_state != state)
+	if  (state_prev != state_next)
 	{
 		event = EVT_INIT;
 	}
 
 	/* 現在のアプリ動作状態を実行する */
-	proc_state(state, event);
+	proc_state(state_next, event);
 
-	prev_state = state;
+	state_prev = state_next;
 }
