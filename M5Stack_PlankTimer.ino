@@ -45,7 +45,8 @@ static const uint32_t COLOR_CUSTOM_SETTING	= 0x999900U;	/* カスタム設定時
 static const uint32_t COLOR_BATT_CHARGING	= 0x990000U;	/* バッテリー充電中の文字色       */
 
 /****************************************************************************
- * @brief 		カスタム時間クラス
+ * @brief	カスタム時間クラス
+ * @note	カスタム設定時間の変更操作、上限・下限の制限値
  */
 class CustomTime
 {
@@ -55,33 +56,33 @@ public:
 	{
 		limit_time_lower_ = sec_lower_limit;
 		limit_time_upper_ = sec_upper_limit;
-		custom_time_ = sec_init;
+		sec_ = sec_init;
 	}
 
 	/**/
 	unsigned long get_sec()
 	{
-		return custom_time_;
+		return sec_;
 	}
 
 	/**/
 	void increase_sec(unsigned long sec)
 	{
-		custom_time_ += sec;
-		custom_time_ = truncate_time(custom_time_);
+		sec_ += sec;
+		sec_ = truncate_time(sec_);
 	}
 
 	/**/
 	void decrease_sec(unsigned long sec)
 	{
-		custom_time_ = ((sec < custom_time_) ? (custom_time_ - sec) : 0);
-		custom_time_ = truncate_time(custom_time_);
+		sec_ = ((sec < sec_) ? (sec_ - sec) : 0);
+		sec_ = truncate_time(sec_);
 	}
 
 private:
 	unsigned long limit_time_lower_;
 	unsigned long limit_time_upper_;
-	unsigned long custom_time_;	
+	unsigned long sec_;	
 
 	/**/
 	unsigned long truncate_time(unsigned long sec)
@@ -99,74 +100,128 @@ private:
 	}
 };
 
+/****************************************************************************
+ * @brief	プリセット時間の種類を特定するID
+ */
+typedef enum {
+	PRESET_TIME_2_MIN,
+	PRESET_TIME_3_MIN,
+	PRESET_TIME_5_MIN,
+	PRESET_TIME_CUSTOM,
+} PresetTimeID;
+
 
 /****************************************************************************
- * @brief 		設定時間を選択するクラス
+ * @brief	プリセット時間クラス
+ * @note	プリセット時間の保持、IDとの紐づけ、カスタム設定時間の識別と時間変更
+ */
+class PresetTime
+{
+public:
+	/* constructor */
+	PresetTime(PresetTimeID id, unsigned long sec, bool is_custom = false)
+	 : id_(id), sec_(sec), is_custom_(is_custom)
+	{}
+
+	PresetTimeID get_id() const
+	{
+		return id_;
+	}
+
+	/**/
+	bool is_custom()
+	{
+		return is_custom_;
+	}
+
+	/**/
+	unsigned long get_sec()
+	{
+		return sec_;
+	}
+
+	/**/
+	void set_custom_time(unsigned long sec)
+	{
+		if (is_custom_)
+		{
+			sec_ = sec;
+		}
+	}
+
+private:
+	PresetTimeID id_;
+	unsigned long sec_;
+	bool is_custom_;
+};
+
+
+/****************************************************************************
+ * @brief	設定時間を選択するクラス
+ * @note	プリセット時間を並び順に保持する、プリセット選択の変更操作、選択されているプリセットの時間を取得
  */
 class TimeSelector
 {
 public:
-	typedef enum {
-		PRESET_TIME_2_MIN,
-		PRESET_TIME_3_MIN,
-		PRESET_TIME_5_MIN,
-		PRESET_TIME_CUSTOM,
-	} PresetTime;
-
 	/* constructor */
-	TimeSelector(CustomTime &custom_time) : custom_time_(custom_time)
+	TimeSelector(CustomTime &custom_time)
+	 : index_preset_(0), custom_time_(custom_time) {}
+
+	/** プリセット時間を追加登録する */
+	void add(PresetTimeID id, unsigned long sec, bool is_custom = false)
 	{
-		/* プリセット時間の選択肢：デフォルト 2分 */
-		preset_time_ = PRESET_TIME_2_MIN;
+		selector_table_.push_back(PresetTime(id, sec, is_custom));
 	}
 
-	/**/
-	void set_preset(PresetTime pt)
+	/** 現在選択中のプリセットを取得する */
+	const PresetTime & get_preset()
 	{
-		preset_time_ = pt;
+		return selector_table_[index_preset_];
 	}
 
-	/**/
-	PresetTime get_preset()
+	/** 次の選択肢に切り替える */
+	void select_prev()
 	{
-		return preset_time_;
+		index_preset_ = (index_preset_ + selector_table_.size() - 1) % selector_table_.size();
 	}
 
-	/**/
+	/** 前の選択肢に切り替える */
+	void select_next()
+	{
+		index_preset_ = (index_preset_ + 1) % selector_table_.size();
+	}
+
+	/** 現在選択中のプリセットにカスタム時間が選択されているかを問い合わせる */
 	bool is_selected_custom()
 	{
-		return (preset_time_ == PRESET_TIME_CUSTOM);
+		return selector_table_[index_preset_].is_custom();
 	}
 
-	/*  */
+	/** 現在選択中のプリセットの秒数を取得する */
 	int get_sec()
 	{
-		return get_preset_sec(preset_time_);
+		return selector_table_[index_preset_].get_sec();
 	}
 
-	/* 指定された PresetTime の時間（秒）を取得する */
-	int get_preset_sec(PresetTime pt)
+	/** 指定されたIDのプリセットの時間を取得する */
+	int get_preset_sec(PresetTimeID id)
 	{
-		int sec = 0;
-		switch(pt)
-		{
-		case PRESET_TIME_2_MIN:		sec = 2 * 60;	break;
-		case PRESET_TIME_3_MIN:		sec = 3 * 60;	break;
-		case PRESET_TIME_5_MIN:		sec = 5 * 60;	break;
-		case PRESET_TIME_CUSTOM:	sec = custom_time_.get_sec();	break;
-		}
-
-		return sec;
+		auto result = std::find_if(selector_table_.begin(), selector_table_.end(),
+									[id](PresetTime &x) { return x.get_id() == id; });
+		return ((result == selector_table_.end()) ? 0 : result->get_sec());
 	}
 
 private:
-	PresetTime preset_time_;
+	std::vector<PresetTime> selector_table_;
+	int index_preset_;
 	CustomTime &custom_time_;
 };
 
 
 /****************************************************************************
- * @brief 		時間計測クラス
+ * @brief	時間計測クラス
+ * @note	計測時間の保持、リセット、カウントアップ操作
+ * @attention	初期の頃に作ったクラスなので操作がこなれていない（TODO: リファクタリングを検討すること）
  */
 class TimeCount
 {
@@ -224,7 +279,9 @@ private:
 
 
 /****************************************************************************
- * @brief 		時間計測の管理クラス
+ * @brief	時間計測の管理クラス
+ * @note	時間計測アプリケーションの操作、リセット、時間の設定、タイマー満了のチェック
+ * @attention	初期の頃に作ったクラスなので操作がこなれていない（TODO: リファクタリングを検討すること）
  */
 class AlarmManager
 {
@@ -263,7 +320,12 @@ private:
 };
 
 
-/* 経過時間計測クラス */
+/****************************************************************************
+ * @brief 	経過時間計測クラス
+ * @note	簡単に時間間隔を計測できるようにするためのサポートユーティリティ
+ * 			Arduinoプログラミングでは mills() 関数でミリ秒単位の経過時間が
+ * 			取得できるのでそれを利用する。
+ */
 class ClockInterval
 {
 public:
@@ -296,7 +358,7 @@ private:
 /* カウントダウンタイマーのドメインオブジェクト */
 TimeCount	 g_time_count;
 AlarmManager g_alarm_manager(g_time_count);
-CustomTime   g_custom_time((1 * 60), (99 * 60), (10 * 60));	/* range: 1..99 [min], default:10 [min] */
+CustomTime   g_custom_time((1 * 60), (99 * 60), (10 * 60));	/* range: 1..99 [min], custom time default:10 [min] */
 TimeSelector g_time_selector(g_custom_time);
 
 /** 設定時間の色 */
@@ -307,6 +369,9 @@ bool g_is_long_pressed;
 
 /** ブリンク表示用タイミングフラグ*/
 bool g_flag_blink;
+
+/** プリセット時間テーブルのインデックス */
+int g_index_preset = 0;
 
 
 /****************************************************************************
@@ -383,37 +448,37 @@ void draw_power_status(LGFX_Sprite &sprite, int y_offset)
  */
 void draw_timer_select(LGFX_Sprite &sprite, int y_offset)
 {
-	static struct {
-		TimeSelector::PresetTime preset_time;
+	static const struct {
+		PresetTimeID id;
 		struct {
 			int x, y;
 		} pos;
-	} selector[] = {
-		{ TimeSelector::PRESET_TIME_2_MIN,  {  30, 170 } },
-		{ TimeSelector::PRESET_TIME_3_MIN,  { 130, 170 } },
-		{ TimeSelector::PRESET_TIME_5_MIN,  { 230, 170 } },
-		{ TimeSelector::PRESET_TIME_CUSTOM, {  80, 210 } },
+	} selector_items[] = {
+		{ PRESET_TIME_2_MIN,  {  30, 170 } },
+		{ PRESET_TIME_3_MIN,  { 130, 170 } },
+		{ PRESET_TIME_5_MIN,  { 230, 170 } },
+		{ PRESET_TIME_CUSTOM, {  80, 210 } },
 	};
-	const int NUM_SELECTOR = (sizeof(selector)/sizeof(selector[0]));
 
-	TimeSelector::PresetTime pt_cur = g_time_selector.get_preset();
-	int sec_count = g_time_selector.get_sec();
+	static const int NUM_SELECTOR_ITEM = (sizeof(selector_items)/sizeof(selector_items[0]));
 
-	for (int i = 0; i < NUM_SELECTOR; i++)
+	const PresetTime &pt_cur = g_time_selector.get_preset();
+
+	for (int i = 0; i < NUM_SELECTOR_ITEM; i++)
 	{
-		int x = selector[i].pos.x;
-		int y = selector[i].pos.y;
-		TimeSelector::PresetTime pt_temp = selector[i].preset_time;
-		int sec_temp = g_time_selector.get_preset_sec(pt_temp);
-		int min = sec_temp / 60;
-		int sec = sec_temp % 60;
+		int x = selector_items[i].pos.x;
+		int y = selector_items[i].pos.y;
+		PresetTimeID id = selector_items[i].id;
+		int sec_preset = g_time_selector.get_preset_sec(id);
+		int min = sec_preset / 60;
+		int sec = sec_preset % 60;
 
 		sprite.setCursor(x, y - y_offset);
 
-		uint32_t color_back = (pt_cur == pt_temp) ? COLOR_BACK_SELECTED : COLOR_BACK_NOT_SELECT;
+		uint32_t color_back = (pt_cur.get_id() == id) ? COLOR_BACK_SELECTED : COLOR_BACK_NOT_SELECT;
 		sprite.setTextColor(COLOR_NORMAL, color_back);
 
-		if (pt_temp == TimeSelector::PRESET_TIME_CUSTOM)
+		if (id == PRESET_TIME_CUSTOM)
 		{
 			sprite.setFont(&fonts::FreeSansBold9pt7b);
 			sprite.setTextSize(1.4);
@@ -450,6 +515,16 @@ int changestat_Idle(int event)
 
 	switch(event)
 	{
+	case EVT_BTN_A_PRESSED:	/* Aボタン押し → 左向きの選択 */
+		g_time_selector.select_prev();
+		/* (状態の遷移は無し) */
+		break;
+
+	case EVT_BTN_C_PRESSED:	/* Cボタン押し → 右向きの選択 */
+		g_time_selector.select_next();
+		/* (状態の遷移は無し) */
+		break;
+
 	case EVT_BTN_B_PRESSED:
 		stat_new = g_time_selector.is_selected_custom() ? STAT_CUSTOM_SETTING : STAT_MEASURING;
 		break;
@@ -465,55 +540,17 @@ int changestat_Idle(int event)
 
 /****************************************************************************
  * @brief 		アプリ動作状態処理：Idle
- * @param [in]	event - この状態内で処理するイベント：EVT_XXX
+ * @param [in]	is_enter - この状態内に最初に入ってきたことを示す（この状態を初期化するために参照する）
  */
-void procstat_Idle(int event)
+void procstat_Idle(bool is_enter)
 {
 	static ClockInterval interval(millis);
 
-	if (event == EVT_INIT)
+	if (is_enter)
 	{
 		g_time_count.reset();
 		interval.mark();
 		g_flag_blink = true;
-	}
-
-	/* アラームの選択操作 */
-	static const struct {
-		TimeSelector::PresetTime preset_time;
-	} preset_select_tab[] = {
-		{ TimeSelector::PRESET_TIME_2_MIN  },
-		{ TimeSelector::PRESET_TIME_3_MIN  },
-		{ TimeSelector::PRESET_TIME_5_MIN  },
-		{ TimeSelector::PRESET_TIME_CUSTOM },
-	};
-	static const int NUM_PT_TAB = (sizeof(preset_select_tab) / sizeof(preset_select_tab)[0]);
-	int idx_pt;
-	TimeSelector::PresetTime pt_cur = g_time_selector.get_preset();
-
-	for (idx_pt = 0; idx_pt < NUM_PT_TAB; idx_pt++)
-	{
-		if (preset_select_tab[idx_pt].preset_time == pt_cur)
-		{
-			break;
-		}
-	}
-
-	if (idx_pt < NUM_PT_TAB)
-	{
-		int dir = 0;
-		if (event == EVT_BTN_A_PRESSED)
-		{ /* Aボタン押し → 左向きの選択 */
-			dir = -1;
-		}
-		else if (event == EVT_BTN_C_PRESSED)
-		{ /* Cボタン押し → 右向きの選択 */
-			dir = 1;
-		}
-
-		idx_pt = (idx_pt + NUM_PT_TAB + dir) % NUM_PT_TAB;
-		TimeSelector::PresetTime pt_next = preset_select_tab[idx_pt].preset_time;
-		g_time_selector.set_preset(pt_next);
 	}
 
 	if (interval.is_past(300))
@@ -534,10 +571,11 @@ void drawstat_Idle(LGFX_Sprite &sprite, int y_offset)
 {
 	/* 現在選択されているアラーム時間を計測時間表示のところに出す */
 	g_color_clock = g_flag_blink ? COLOR_NORMAL : COLOR_BACK_OFF;
-	TimeSelector::PresetTime pt_cur = g_time_selector.get_preset();
+	PresetTime pt_cur = g_time_selector.get_preset();
 	TimeCount tc_temp;
-	tc_temp.set_time(g_time_selector.get_preset_sec(pt_cur));
+	tc_temp.set_time(g_time_selector.get_preset_sec(pt_cur.get_id()));
 	draw_time(sprite, y_offset, tc_temp);
+	draw_timer_select(sprite, y_offset);
 }
 
 
@@ -570,13 +608,13 @@ int changestat_Measuring(int event)
 
 /****************************************************************************
  * @brief 		アプリ動作状態処理：Measuring
- * @param [in]	event - この状態内で処理するイベント：EVT_XXX
+ * @param [in]	is_enter - この状態内に最初に入ってきたことを示す（この状態を初期化するために参照する）
  */
-void procstat_Measuring(int event)
+void procstat_Measuring(bool is_enter)
 {
 	static ClockInterval interval(millis);
 
-	if (event == EVT_INIT)
+	if (is_enter)
 	{
 		g_color_clock = COLOR_NORMAL;
 		interval.mark();
@@ -603,7 +641,9 @@ void procstat_Measuring(int event)
 void drawstat_Measuring(LGFX_Sprite &sprite, int y_offset)
 {
 	draw_time(sprite, y_offset, g_time_count, g_flag_blink);
+	draw_timer_select(sprite, y_offset);
 }
+
 
 /****************************************************************************
  * @brief 		アプリ動作状態の更新（イベント処理）：Stop
@@ -632,9 +672,9 @@ int changestat_Stop(int event)
 
 /****************************************************************************
  * @brief 		アプリ動作状態処理：Stop
- * @param [in]	event - この状態内で処理するイベント：EVT_XXX
+ * @param [in]	is_enter - この状態内に最初に入ってきたことを示す（この状態を初期化するために参照する）
  */
-void procstat_Stopped(int event)
+void procstat_Stopped(bool is_enter)
 {
 	static const uint16_t BUZZ_FREQUENCY = 880;
 	static const uint32_t BUZZ_DURATION  = 50;
@@ -643,7 +683,7 @@ void procstat_Stopped(int event)
 	static ClockInterval interval_2nd_buzzer(millis);
 	static int count_buzzer;
 
-	if (event == EVT_INIT)
+	if (is_enter)
 	{
 		g_color_clock = COLOR_STOP;
 		interval.mark();
@@ -683,6 +723,7 @@ void drawstat_Stopped(LGFX_Sprite &sprite, int y_offset)
 {
 	g_color_clock = g_flag_blink ? COLOR_STOP : COLOR_NORMAL;
 	draw_time(sprite, y_offset, g_time_count);
+	draw_timer_select(sprite, y_offset);
 }
 
 /****************************************************************************
@@ -699,6 +740,13 @@ int changestat_CustomSetting(int event)
 	unsigned long now_millis;
 	int stat_new = STAT_UNKNOWN;
 
+	/* カスタム時間の設定を変更して更新する */
+	auto update_custom_time = [](){
+		unsigned long sec = g_custom_time.get_sec();
+		PresetTime & custom_preset = (PresetTime &)g_time_selector.get_preset();	/* ※ 更新が必要なのでここだけ const を外す */
+		custom_preset.set_custom_time(sec);
+	};
+
 	g_is_long_pressed = false;
 	now_millis = millis();
 
@@ -710,24 +758,28 @@ int changestat_CustomSetting(int event)
 
 	case EVT_BTN_A_PRESSED:
 		g_custom_time.decrease_sec(DIFF_TIME_PRESSED);
+		update_custom_time();
 		break;
 
 	case EVT_BTN_A_LONG_PRESSED:
 		g_is_long_pressed = true;
 		if (INTERVAL_LONG_PRESS < (now_millis - last_millis)) {
 			g_custom_time.decrease_sec(DIFF_TIME_LONG_PRESSED);
+			update_custom_time();
 			last_millis = now_millis;
 		}
 		break;
 
 	case EVT_BTN_C_PRESSED:
 		g_custom_time.increase_sec(DIFF_TIME_PRESSED);
+		update_custom_time();
 		break;
 
 	case EVT_BTN_C_LONG_PRESSED:
 		g_is_long_pressed = true;
 		if (INTERVAL_LONG_PRESS < (now_millis - last_millis)) {
 			g_custom_time.increase_sec(DIFF_TIME_LONG_PRESSED);
+			update_custom_time();
 			last_millis = now_millis;
 		}
 		break;
@@ -743,12 +795,13 @@ int changestat_CustomSetting(int event)
 
 /****************************************************************************
  * @brief 		アプリ動作状態処理：CustomSetting
- * @param [in]	event - この状態内で処理するイベント：EVT_XXX
+  * @param [in]	is_enter - この状態内に最初に入ってきたことを示す（この状態を初期化するために参照する）
  */
-void procstat_CustomSetting(int event)
+void procstat_CustomSetting(bool is_enter)
 {
-	if (event == EVT_INIT)
+	if (is_enter)
 	{
+		/* (do nothing) */
 	}
 }
 
@@ -764,53 +817,24 @@ void drawstat_CustomSetting(LGFX_Sprite &sprite, int y_offset)
 	/* カスタム設定時間を表示する（黄色文字、点滅なし） */
 	g_color_clock = COLOR_CUSTOM_SETTING;
 	TimeCount tc_temp;
-	TimeSelector::PresetTime pt_cur = g_time_selector.get_preset();
-	tc_temp.set_time(g_time_selector.get_preset_sec(pt_cur));
+	PresetTime pt_cur = g_time_selector.get_preset();
+	tc_temp.set_time(g_time_selector.get_preset_sec(pt_cur.get_id()));
 	draw_time(sprite, y_offset, tc_temp);
+	draw_custom_ope_guid(sprite, y_offset);
 }
 
+
 /****************************************************************************
- * @brief		現在のアプリ状態の動作を実行する
- * @param [in]	state  - 実行するアプリ動作状態：STAT_XXX
- * @param [in]	event - EVT_INIT:    状態遷移直後の初期化処理を実行する
- *						 EVT_NONE: 定常時の状態の処理を実行する
+ * @brief		現在のアプリ状態を描画する
+ * @param [in]	p_drawstat - 各状態の描画関数
  * @note
- *   - 主に画面描画の処理を実行する。その他、時間の管理、音の出力等。
- *   - 他の状態から遷移してきた最初は EVT_INIT が渡される
  *   - 描画は lcd.startWrite() ～ lcd.endWrite() の間で実施することで高速化する。
  *     （SPIによるLCDへの画像データ転送をまとめて行うので省電力にもなる（はず））
  *     - この間にいる時は他の SPIデバイスは使えない。
  *       （→ それでも他の SPIデバイスを使いたい場合は LCD.beginTransaction()を利用する）
  */
-void proc_state(int state, int event)
+void draw_state(void (*p_drawstat)(LGFX_Sprite &, int))
 {
-	void (*p_drawstat)(LGFX_Sprite &, int);
-
-	switch(state)
-	{
-	case STAT_IDLE:
-		procstat_Idle(event);
-		p_drawstat = drawstat_Idle;
-		break;
-
-	case STAT_MEASURING:
-		procstat_Measuring(event);
-		p_drawstat = drawstat_Measuring;
-		break;
-
-	case STAT_STOPPED:
-		procstat_Stopped(event);
-		p_drawstat = drawstat_Stopped;
-		break;
-
-	case STAT_CUSTOM_SETTING:
-		procstat_CustomSetting(event);
-		p_drawstat = drawstat_CustomSetting;
-		break;
-	}
-	
-	lcd_real.startWrite();
-
 	/* 画面描画（分割描画のため分割数分を繰り返している）
 	 * オフスクリーンに描画してからLCDへ転送するｘ分割数 */
 	int32_t width = lcd_real.width();
@@ -828,20 +852,67 @@ void proc_state(int state, int event)
 		/* バッテリーの状態（充電中、バッテリーレベル） */
 		draw_power_status(sprite, y_offset);
 
-		/* タイマー時間の選択肢 */
-		if (state == STAT_CUSTOM_SETTING)
-		{
-			draw_custom_ope_guid(sprite, y_offset);
-		}
-		else
-		{
-			draw_timer_select(sprite, y_offset);
-		}
-
+		/* オフスクリーンに描画した内容を LCDへ転送する */
+		lcd_real.startWrite();
 		sprite.pushSprite(0, y_offset);
+		lcd_real.endWrite();
+	}
+}
+
+
+/****************************************************************************
+ * @brief		現在のアプリ状態の動作を実行する
+ * @param [in]	state      - 実行するアプリ動作状態：STAT_XXX
+ * @param [in]	is_changed - 状態が変化したことを示す
+ *						 EVT_NONE: 定常時の状態の処理を実行する
+ * @note
+ *   - 主に画面描画の処理を実行する。その他、時間の管理、音の出力等。
+ *   - 他の状態から遷移してきた最初は EVT_INIT が渡される
+ *   - 描画は lcd.startWrite() ～ lcd.endWrite() の間で実施することで高速化する。
+ *     （SPIによるLCDへの画像データ転送をまとめて行うので省電力にもなる（はず））
+ *     - この間にいる時は他の SPIデバイスは使えない。
+ *       （→ それでも他の SPIデバイスを使いたい場合は LCD.beginTransaction()を利用する）
+ */
+void proc_state(int state, bool is_changed)
+{
+	void (*p_drawstat)(LGFX_Sprite &, int) = NULL;
+	void (*p_procstat)(bool) = NULL;
+	bool is_enter = is_changed;
+
+	switch(state)
+	{
+	case STAT_IDLE:
+		p_procstat = procstat_Idle;
+		p_drawstat = drawstat_Idle;
+		break;
+
+	case STAT_MEASURING:
+		p_procstat = procstat_Measuring;
+		p_drawstat = drawstat_Measuring;
+		break;
+
+	case STAT_STOPPED:
+		p_procstat = procstat_Stopped;
+		p_drawstat = drawstat_Stopped;
+		break;
+
+	case STAT_CUSTOM_SETTING:
+		p_procstat = procstat_CustomSetting;
+		p_drawstat = drawstat_CustomSetting;
+		break;
 	}
 
-	lcd_real.endWrite();
+	/* 現在の状態の処理 */
+	if (p_procstat != NULL)
+	{
+		p_procstat(is_enter);
+	}
+
+	/* 現在の状態の描画 */
+	if (p_drawstat != NULL)
+	{
+		draw_state(p_drawstat);
+	}
 }
 
 
@@ -879,8 +950,9 @@ int generate_event()
 
 
 /****************************************************************************
- * @brief 		状態を更新する
+ * @brief 		アプリケーションの動作状態を更新する
  * @param [in]	state - 現在の状態
+ * @param [in]	event - 通知されたイベント
  * @return 		更新後の状態
  */
 int change_state(int state, int event)
@@ -937,6 +1009,12 @@ void setup() {
 	lcd_real.setBrightness(64);
 	lcd_real.setColorDepth(16);  // RGB565の16ビットに設定
 
+	/* プリセット時間の選択肢の登録（選択順） */
+	g_time_selector.add(PRESET_TIME_2_MIN,  ( 2 * 60));
+	g_time_selector.add(PRESET_TIME_3_MIN,  ( 3 * 60));
+	g_time_selector.add(PRESET_TIME_5_MIN,  ( 5 * 60));
+	g_time_selector.add(PRESET_TIME_CUSTOM, (10 * 60), true);
+
 	/* バッファ画面（LCDと同サイズを2分割したもの）の初期化 */
 	/* 1枚目のスプライトの初期化 */
 	sprite1.setColorDepth(lcd_real.getColorDepth());
@@ -969,14 +1047,10 @@ void loop() {
 	/* イベントに応じてアプリ動作状態を更新する */
 	state_next = change_state(state_prev, event);
 
-	/* アプリ動作状態に変化があったら、新しい状態の初期化処理を走らせる */
-	if  (state_prev != state_next)
-	{
-		event = EVT_INIT;
-	}
-
-	/* 現在のアプリ動作状態を実行する */
-	proc_state(state_next, event);
+	/* 現在のアプリ動作状態を実行する
+	 * （アプリ動作状態に変化があったら、新しい状態の初期化処理を走らせる） */
+	bool is_changed = (state_prev != state_next);
+	proc_state(state_next, is_changed);
 
 	state_prev = state_next;
 }
