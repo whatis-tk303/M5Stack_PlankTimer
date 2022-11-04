@@ -10,16 +10,17 @@ LGFX_Sprite sprite1(&lcd_real);		/* 分割描画バッファ１ */
 LGFX_Sprite sprite2(&lcd_real);		/* 分割描画バッファ２ */
 
 /** アプリ動作状態 */
-enum {
+typedef enum {
 	STAT_UNKNOWN,			/* ダミー状態（状態の実体は無い） */
 	STAT_IDLE,				/* 設定時間選択                   */
 	STAT_MEASURING,			/* 計測中                         */
 	STAT_STOPPED,			/* 計測終了                       */
 	STAT_CUSTOM_SETTING,	/* カスタム設定時間の変更         */
-};
+} State_t;
+
 
 /** アプリケーションのイベント */
-enum {
+typedef enum {
 	EVT_NONE,
 	EVT_INIT,
 	EVT_BTN_A_PRESSED,
@@ -32,7 +33,7 @@ enum {
 	EVT_BTN_A_LONG_PRESSED,
 	EVT_BTN_B_LONG_PRESSED,
 	EVT_BTN_C_LONG_PRESSED,
-};
+} Event_t;
 
 /** definition of colors */
 static const uint32_t COLOR_NORMAL			= 0x00FF88U;	/* 通常の文字色                   */
@@ -43,6 +44,17 @@ static const uint32_t COLOR_BACK_SELECTED	= 0x999900U;	/* 選択されている�
 static const uint32_t COLOR_BACK_NOT_SELECT	= 0x553311U;	/* 選択されていない設定値の背景色 */
 static const uint32_t COLOR_CUSTOM_SETTING	= 0x999900U;	/* カスタム設定時の文字色         */
 static const uint32_t COLOR_BATT_CHARGING	= 0x990000U;	/* バッテリー充電中の文字色       */
+
+
+/****************************************************************************
+ * @brief	プリセット時間の種類を特定するID
+ */
+typedef enum {
+	PRESET_TIME_2_MIN,
+	PRESET_TIME_3_MIN,
+	PRESET_TIME_5_MIN,
+	PRESET_TIME_CUSTOM,
+} PresetTimeID;
 
 
 /****************************************************************************
@@ -103,17 +115,6 @@ private:
 
 
 /****************************************************************************
- * @brief	プリセット時間の種類を特定するID
- */
-typedef enum {
-	PRESET_TIME_2_MIN,
-	PRESET_TIME_3_MIN,
-	PRESET_TIME_5_MIN,
-	PRESET_TIME_CUSTOM,
-} PresetTimeID;
-
-
-/****************************************************************************
  * @brief	プリセット時間クラス
  * @note	プリセット時間の保持、IDとの紐づけ、カスタム設定時間の識別と時間変更
  */
@@ -166,8 +167,7 @@ class TimeSelector
 {
 public:
 	/* constructor */
-	TimeSelector(CustomTime &custom_time)
-	 : index_preset_(0), custom_time_(custom_time) {}
+	TimeSelector() : index_preset_(0) {}
 
 	/** プリセット時間を追加登録する */
 	void add(PresetTimeID id, unsigned long sec, bool is_custom = false)
@@ -216,7 +216,6 @@ public:
 private:
 	std::vector<PresetTime> selector_table_;
 	int index_preset_;
-	CustomTime &custom_time_;
 };
 
 
@@ -361,7 +360,7 @@ private:
 TimeCount	 g_time_count;
 AlarmManager g_alarm_manager(g_time_count);
 CustomTime   g_custom_time((1 * 60), (99 * 60), (10 * 60));	/* range: 1..99 [min], custom time default:10 [min] */
-TimeSelector g_time_selector(g_custom_time);
+TimeSelector g_time_selector;
 
 /** 設定時間の色 */
 unsigned long g_color_clock;
@@ -512,9 +511,9 @@ void draw_custom_ope_guid(LGFX_Sprite &sprite, int y_offset)
  * @param [in]	event - 通知されたイベント
  * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
  */
-int changestat_Idle(int event)
+State_t changestat_Idle(Event_t event)
 {
-	int stat_new = STAT_UNKNOWN;
+	State_t stat_new = STAT_UNKNOWN;
 
 	switch(event)
 	{
@@ -586,9 +585,9 @@ void drawstat_Idle(LGFX_Sprite &sprite, int y_offset)
  * @param [in]	event - 通知されたイベント
 * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
  */
-int changestat_Measuring(int event)
+State_t changestat_Measuring(Event_t event)
 {
-	int stat_new = STAT_UNKNOWN;
+	State_t stat_new = STAT_UNKNOWN;
 
 	switch(event)
 	{
@@ -653,9 +652,9 @@ void drawstat_Measuring(LGFX_Sprite &sprite, int y_offset)
  * @param [in]	event - 通知されたイベント
  * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
  */
-int changestat_Stop(int event)
+State_t changestat_Stop(Event_t event)
 {
-	int stat_new = STAT_UNKNOWN;
+	State_t stat_new = STAT_UNKNOWN;
 
 	switch(event)
 	{
@@ -736,7 +735,7 @@ void drawstat_Stopped(LGFX_Sprite &sprite, int y_offset)
  * @param [in]	event - 通知されたイベント
  * @return		新しい遷移先の状態、遷移先に変化がない場合は STAT_UNKNOWN
  */
-int changestat_CustomSetting(int event)
+State_t changestat_CustomSetting(Event_t event)
 {
 	static const unsigned long INTERVAL_LONG_PRESS = 300;	/* for interval of button pressed while long time [msec] */
 	static const unsigned long DIFF_TIME_PRESSED = 60;
@@ -744,7 +743,7 @@ int changestat_CustomSetting(int event)
 
 	static unsigned long last_millis = 0;
 	unsigned long now_millis;
-	int stat_new = STAT_UNKNOWN;
+	State_t stat_new = STAT_UNKNOWN;
 
 	/* カスタム時間の設定を変更して更新する */
 	auto update_custom_time = [](){
@@ -919,7 +918,7 @@ void proc_state(int state, bool is_changed)
  * @brief 		イベントを生成する
  * @return 		生成したイベント。イベントの生成がなければ EVT_NONE
  */
-int generate_event()
+Event_t generate_event()
 {
 	static const unsigned long SEC_LONG_PRESS = 1000;		/* 長押しを判定する時間 [ms] */
 
@@ -957,9 +956,9 @@ int generate_event()
  * @param [in]	event - 通知されたイベント
  * @return 		更新後の状態
  */
-int change_state(int state, int event)
+State_t change_state(State_t state, Event_t event)
 {
-	int state_new = STAT_UNKNOWN;
+	State_t state_new = STAT_UNKNOWN;
 
 	switch(state)
 	{
@@ -1037,9 +1036,9 @@ void setup() {
  * @brief 		Arduino関数：定常動作時の処理
  */
 void loop() {
-	static int state_prev = STAT_UNKNOWN;
-	int state_next;
-	int event;
+	static State_t state_prev = STAT_UNKNOWN;
+	State_t state_next;
+	Event_t event;
 
 	/* ボタン入力の状態を更新する */
 	M5.update();
