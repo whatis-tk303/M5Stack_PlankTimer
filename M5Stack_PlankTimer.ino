@@ -325,28 +325,43 @@ bool g_flag_blink;
  * @param [in]	light      - 点滅状態（true: 点灯）
  */
 void draw_time(LGFX_Sprite &sprite, int y_offset, const CounterTime &time, bool light = true) {
-	sprite.setCursor(10, 40 - y_offset);
+	sprite.setCursor(5, 50 - y_offset);
 	sprite.setFont(&fonts::Font7);
-	sprite.setTextSize(2.2);
+	sprite.setTextSize(1.8);
 
 	CounterTime::ClockTime ct = time.get_clock_time();
 
 	if (light)
 	{
 		sprite.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
-		sprite.printf("%02d:%02d", (int)ct.min, (int)ct.sec);
+		sprite.printf("  %02d:%02d ", (int)ct.min, (int)ct.sec);
 	}
 	else
 	{
 		sprite.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
-		sprite.printf("%02d", (int)ct.min);
+		sprite.printf("  %02d", (int)ct.min);
 
 		sprite.setTextColor(COLOR_BACK_OFF, COLOR_BACK_CLOCK);
 		sprite.printf(":");
 
 		sprite.setTextColor(g_color_clock, COLOR_BACK_CLOCK);
-		sprite.printf("%02d", (int)ct.sec);
+		sprite.printf("%02d ", (int)ct.sec);
 	}
+}
+
+
+/****************************************************************************
+ * @brief 		計測中の進捗状況を描画する
+ */
+void draw_progress_measure(LGFX_Sprite &sprite, int y_offset, int x_progress) {
+	int32_t w = lcd_real.width();
+	int32_t h = 16;
+
+	sprite.fillRect(0,  27 - y_offset, w, h, COLOR_NORMAL);
+	sprite.fillRect(0, 144 - y_offset, w, h, COLOR_NORMAL);
+
+	sprite.fillRect(x_progress,  27 - y_offset, 20, h, COLOR_BACK_OFF);
+	sprite.fillRect(x_progress, 144 - y_offset, 20, h, COLOR_BACK_OFF);
 }
 
 
@@ -588,9 +603,14 @@ void procstat_Measuring(bool is_enter)
  */
 void drawstat_Measuring(LGFX_Sprite &sprite, int y_offset)
 {
+	static int x_progress = 0;
+
+	x_progress = (x_progress + 30) % lcd_real.width();
+
 	g_color_clock = COLOR_NORMAL;
 	const CounterTime & time = g_alarm_manager.get_measuring_time();
 	draw_time(sprite, y_offset, time, g_flag_blink);
+	draw_progress_measure(sprite, y_offset, x_progress);
 	draw_timer_select(sprite, y_offset);
 }
 
