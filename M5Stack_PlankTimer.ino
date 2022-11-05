@@ -64,6 +64,7 @@ typedef enum {
 class CounterTime
 {
 public:
+	/** 保持している秒数から分と秒を作るサポートクラス */
 	struct ClockTime
 	{
 		/* constructor */
@@ -77,7 +78,7 @@ public:
 		unsigned long sec;
 	};
 
-	/* constructor */
+	/** constructor */
 	CounterTime(unsigned long sec) : sec_(sec) {}
 
 	/**/
@@ -115,63 +116,6 @@ public:
 
 private:
 	unsigned long sec_;	
-};
-
-
-/****************************************************************************
- * @brief	カスタム時間クラス
- * @note	カスタム設定時間の変更操作、上限・下限の制限値
- */
-class CustomTime
-{
-public:
-	/* constructor */
-	CustomTime(unsigned long sec_lower_limit, unsigned long sec_upper_limit, unsigned long sec_init)
-	{
-		limit_time_lower_ = sec_lower_limit;
-		limit_time_upper_ = sec_upper_limit;
-		sec_ = sec_init;
-	}
-
-	/**/
-	unsigned long get_sec()
-	{
-		return sec_;
-	}
-
-	/**/
-	void increase_sec(unsigned long sec)
-	{
-		sec_ += sec;
-		sec_ = truncate_time(sec_);
-	}
-
-	/**/
-	void decrease_sec(unsigned long sec)
-	{
-		sec_ = ((sec < sec_) ? (sec_ - sec) : 0);
-		sec_ = truncate_time(sec_);
-	}
-
-private:
-	unsigned long limit_time_lower_;
-	unsigned long limit_time_upper_;
-	unsigned long sec_;	
-
-	/**/
-	unsigned long truncate_time(unsigned long sec)
-	{
-		unsigned long updated_time = sec;
-
-		if (updated_time < limit_time_lower_) {
-			updated_time = limit_time_lower_;
-		}
-		else if (limit_time_upper_ < updated_time) {
-			updated_time = limit_time_upper_;
-		}
-
-		return updated_time;
-	}
 };
 
 
@@ -365,7 +309,6 @@ private:
 
 /* カウントダウンタイマーのドメインオブジェクト */
 AlarmManager g_alarm_manager;
-CustomTime   g_custom_time((1 * 60), (99 * 60), (10 * 60));	/* range: 1..99 [min], custom time default:10 [min] */
 TimeSelector g_time_selector;
 
 /** 設定時間の色 */
@@ -620,7 +563,6 @@ void procstat_Measuring(bool is_enter)
 	if (is_enter)
 	{
 		g_alarm_manager.reset();	//g_time_count.reset();
-		g_color_clock = COLOR_NORMAL;
 		interval.mark();
 		g_flag_blink = true;
 		PresetTime const & preset = g_time_selector.get_selected_preset();
@@ -645,6 +587,7 @@ void procstat_Measuring(bool is_enter)
  */
 void drawstat_Measuring(LGFX_Sprite &sprite, int y_offset)
 {
+	g_color_clock = COLOR_NORMAL;
 	const CounterTime & time = g_alarm_manager.get_measuring_time();
 	draw_time(sprite, y_offset, time, g_flag_blink);
 	draw_timer_select(sprite, y_offset);
@@ -692,7 +635,6 @@ void procstat_Stopped(bool is_enter)
 
 	if (is_enter)
 	{
-		g_color_clock = COLOR_STOP;
 		interval.mark();
 
 		interval_2nd_buzzer.mark();
@@ -743,16 +685,25 @@ State_t changestat_CustomSetting(Event_t event)
 	static const unsigned long INTERVAL_LONG_PRESS = 300;	/* for interval of button pressed while long time [msec] */
 	static const unsigned long DIFF_TIME_PRESSED = 60;
 	static const unsigned long DIFF_TIME_LONG_PRESSED = 600;
+	static const unsigned long LOWER_LIMIT_SEC = (1 * 60);
+	static const unsigned long UPPER_LIMIT_SEC = (99 * 60);
 
 	static unsigned long last_millis = 0;
 	unsigned long now_millis;
 	State_t stat_new = STAT_UNKNOWN;
 
-	/* カスタム時間の設定を変更して更新する */
-	auto update_custom_time = [](){
-		unsigned long sec = g_custom_time.get_sec();
-		PresetTime & custom_preset = (PresetTime &)g_time_selector.get_selected_preset();	/* ※ 更新が必要なのでここだけ const を外す */
-		custom_preset.set_custom_time(sec);
+	/* カスタム時間の設定を変更する（増加） */
+	auto increase_custom_time = [](unsigned long diff_sec){
+		PresetTime & custom_preset = (PresetTime &)g_time_selector.get_preset(PresetTimeID::PRESET_TIME_CUSTOM);
+		CounterTime & time = (CounterTime &)custom_preset.get_time();
+		time.increase_sec(diff_sec, UPPER_LIMIT_SEC);
+	};
+
+	/* カスタム時間の設定を変更する（減少） */
+	auto decrease_custom_time = [](unsigned long diff_sec){
+		PresetTime & custom_preset = (PresetTime &)g_time_selector.get_preset(PresetTimeID::PRESET_TIME_CUSTOM);
+		CounterTime & time = (CounterTime &)custom_preset.get_time();
+		time.decrease_sec(diff_sec, LOWER_LIMIT_SEC);
 	};
 
 	now_millis = millis();
@@ -764,27 +715,23 @@ State_t changestat_CustomSetting(Event_t event)
 		break;
 
 	case EVT_BTN_A_PRESSED:
-		g_custom_time.decrease_sec(DIFF_TIME_PRESSED);
-		update_custom_time();
+		decrease_custom_time(DIFF_TIME_PRESSED);
 		break;
 
 	case EVT_BTN_A_LONG_PRESSED:
 		if (INTERVAL_LONG_PRESS < (now_millis - last_millis)) {
-			g_custom_time.decrease_sec(DIFF_TIME_LONG_PRESSED);
-			update_custom_time();
+			decrease_custom_time(DIFF_TIME_LONG_PRESSED);
 			last_millis = now_millis;
 		}
 		break;
 
 	case EVT_BTN_C_PRESSED:
-		g_custom_time.increase_sec(DIFF_TIME_PRESSED);
-		update_custom_time();
+		increase_custom_time(DIFF_TIME_PRESSED);
 		break;
 
 	case EVT_BTN_C_LONG_PRESSED:
 		if (INTERVAL_LONG_PRESS < (now_millis - last_millis)) {
-			g_custom_time.increase_sec(DIFF_TIME_LONG_PRESSED);
-			update_custom_time();
+			increase_custom_time(DIFF_TIME_LONG_PRESSED);
 			last_millis = now_millis;
 		}
 		break;
@@ -808,6 +755,8 @@ void procstat_CustomSetting(bool is_enter)
 	{
 		/* (do nothing) */
 	}
+
+	/* (do nothing) */
 }
 
 
@@ -1024,10 +973,10 @@ void setup() {
 	M5.Power.begin();		/* バッテリーの状態を取得する */
 
 	/* プリセット時間の選択肢の登録（選択順） */
-	g_time_selector.add(PresetTime(PRESET_TIME_2_MIN,  (2 * 60)));
-	g_time_selector.add(PresetTime(PRESET_TIME_3_MIN,  (3 * 60)));
-	g_time_selector.add(PresetTime(PRESET_TIME_5_MIN,  (5 * 60)));
-	g_time_selector.add(PresetTime(PRESET_TIME_CUSTOM, (10 * 60), true));
+	g_time_selector.add(PresetTime(PresetTimeID::PRESET_TIME_2_MIN,  (2 * 60)));
+	g_time_selector.add(PresetTime(PresetTimeID::PRESET_TIME_3_MIN,  (3 * 60)));
+	g_time_selector.add(PresetTime(PresetTimeID::PRESET_TIME_5_MIN,  (5 * 60)));
+	g_time_selector.add(PresetTime(PresetTimeID::PRESET_TIME_CUSTOM, (10 * 60), true));
 }
 
 
