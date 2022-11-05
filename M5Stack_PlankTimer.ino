@@ -131,6 +131,7 @@ public:
 	 : id_(id), counter_time_(CounterTime(sec)), is_custom_(is_custom)
 	{}
 
+	/**/
 	PresetTimeID get_id() const
 	{
 		return id_;
@@ -562,7 +563,7 @@ void procstat_Measuring(bool is_enter)
 
 	if (is_enter)
 	{
-		g_alarm_manager.reset();	//g_time_count.reset();
+		g_alarm_manager.reset();
 		interval.mark();
 		g_flag_blink = true;
 		PresetTime const & preset = g_time_selector.get_selected_preset();
@@ -694,14 +695,14 @@ State_t changestat_CustomSetting(Event_t event)
 
 	/* カスタム時間の設定を変更する（増加） */
 	auto increase_custom_time = [](unsigned long diff_sec){
-		PresetTime & custom_preset = (PresetTime &)g_time_selector.get_preset(PresetTimeID::PRESET_TIME_CUSTOM);
+		const PresetTime & custom_preset = g_time_selector.get_preset(PresetTimeID::PRESET_TIME_CUSTOM);
 		CounterTime & time = (CounterTime &)custom_preset.get_time();
 		time.increase_sec(diff_sec, UPPER_LIMIT_SEC);
 	};
 
 	/* カスタム時間の設定を変更する（減少） */
 	auto decrease_custom_time = [](unsigned long diff_sec){
-		PresetTime & custom_preset = (PresetTime &)g_time_selector.get_preset(PresetTimeID::PRESET_TIME_CUSTOM);
+		const PresetTime & custom_preset = g_time_selector.get_preset(PresetTimeID::PRESET_TIME_CUSTOM);
 		CounterTime & time = (CounterTime &)custom_preset.get_time();
 		time.decrease_sec(diff_sec, LOWER_LIMIT_SEC);
 	};
@@ -962,10 +963,10 @@ void setup() {
 	/* バッファ画面（LCDと同サイズを2分割したもの）の初期化 */
 	/* 1枚目のスプライトの初期化 */
 	sprite1.setColorDepth(lcd_real.getColorDepth());
-	sprite1.createSprite(lcd_real.width(), (lcd_real.height() / 2));
+	sprite1.createSprite(lcd_real.width(), (lcd_real.height() / NUM_DIVIDE_OFFSCREEN));
 	/* 2枚目のスプライトの初期化 */
 	sprite2.setColorDepth(lcd_real.getColorDepth());
-	sprite2.createSprite(lcd_real.width(), (lcd_real.height() / 2));
+	sprite2.createSprite(lcd_real.width(), (lcd_real.height() / NUM_DIVIDE_OFFSCREEN));
 
 	Serial.begin(115200);
 
