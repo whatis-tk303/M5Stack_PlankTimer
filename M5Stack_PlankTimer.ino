@@ -352,16 +352,28 @@ void draw_time(LGFX_Sprite &sprite, int y_offset, const CounterTime &time, bool 
 
 /****************************************************************************
  * @brief 		計測中の進捗状況を描画する
+ * @param [in]	x_progress - 進捗度合い？
  */
 void draw_progress_measure(LGFX_Sprite &sprite, int y_offset, int x_progress) {
+	static const int32_t y_hi = 35;
+	static const int32_t y_lo = 144;
+	static const int32_t w_bar = 40;
+	static const int32_t x_offset = (w_bar / 2);
+	static const int32_t h = 8;
 	int32_t w = lcd_real.width();
-	int32_t h = 16;
+	int x1 = x_progress % w;
+	int x2 = (x1 + (w / 2)) % w;
+	int x3 = (x1 + (w * 3 / 4)) % w;
+	int x4 = (x3 + (w / 2)) % w;
 
-	sprite.fillRect(0,  27 - y_offset, w, h, COLOR_NORMAL);
-	sprite.fillRect(0, 144 - y_offset, w, h, COLOR_NORMAL);
+	sprite.fillRect(0,  y_hi - y_offset, w, h, COLOR_BACK_NOT_SELECT);
+	sprite.fillRect(0, y_lo - y_offset, w, h, COLOR_BACK_NOT_SELECT);
 
-	sprite.fillRect(x_progress,  27 - y_offset, 20, h, COLOR_BACK_OFF);
-	sprite.fillRect(x_progress, 144 - y_offset, 20, h, COLOR_BACK_OFF);
+	sprite.fillRect(x1 - x_offset,  y_hi - y_offset, w_bar, h, COLOR_BACK_SELECTED);
+	sprite.fillRect(x2 - x_offset,  y_hi - y_offset, w_bar, h, COLOR_BACK_SELECTED);
+
+	sprite.fillRect(x3 - x_offset, y_lo - y_offset, w_bar, h, COLOR_BACK_SELECTED);
+	sprite.fillRect(x4 - x_offset, y_lo - y_offset, w_bar, h, COLOR_BACK_SELECTED);
 }
 
 
@@ -604,8 +616,13 @@ void procstat_Measuring(bool is_enter)
 void drawstat_Measuring(LGFX_Sprite &sprite, int y_offset)
 {
 	static int x_progress = 0;
+	static ClockInterval interval(millis);
 
-	x_progress = (x_progress + 30) % lcd_real.width();
+	if (interval.is_past(30))
+	{
+		interval.mark();
+		x_progress = (x_progress + 10) % lcd_real.width();
+	}
 
 	g_color_clock = COLOR_NORMAL;
 	const CounterTime & time = g_alarm_manager.get_measuring_time();
