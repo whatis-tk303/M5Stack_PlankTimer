@@ -352,9 +352,11 @@ void draw_time(LGFX_Sprite &sprite, int y_offset, const CounterTime &time, bool 
 
 /****************************************************************************
  * @brief 		計測中の進捗状況を描画する
- * @param [in]	x_progress - 進捗度合い？
+ * @param [in]	x_progress   - 進捗度合い？
+ * @param [in]	color_bar    - バーの色
+ * @param [in]	is_measuring - true:計測中
  */
-void draw_progress_measure(LGFX_Sprite &sprite, int y_offset, int x_progress) {
+void draw_progress_measure(LGFX_Sprite &sprite, int y_offset, int x_progress, uint32_t color_bar, bool is_measuring) {
 	static const int32_t y_hi = 35;
 	static const int32_t y_lo = 144;
 	static const int32_t w_bar = 40;
@@ -366,9 +368,13 @@ void draw_progress_measure(LGFX_Sprite &sprite, int y_offset, int x_progress) {
 	int x3 = (x1 + (w * 3 / 4)) % w;
 	int x4 = (x3 + (w / 2)) % w;
 
-	sprite.fillRect(0,  y_hi - y_offset, w, h, COLOR_BACK_NOT_SELECT);
-	sprite.fillRect(0, y_lo - y_offset, w, h, COLOR_BACK_NOT_SELECT);
+	/* バー部分を描画する */
+	sprite.fillRect(0, y_hi - y_offset, w, h, color_bar);
+	sprite.fillRect(0, y_lo - y_offset, w, h, color_bar);
 
+	if (!is_measuring) return;
+
+	/* 走る光は計測中のみ描画する */
 	sprite.fillRect(x1 - x_offset,  y_hi - y_offset, w_bar, h, COLOR_BACK_SELECTED);
 	sprite.fillRect(x2 - x_offset,  y_hi - y_offset, w_bar, h, COLOR_BACK_SELECTED);
 
@@ -548,6 +554,7 @@ void drawstat_Idle(LGFX_Sprite &sprite, int y_offset)
 	PresetTime pt_cur = g_time_selector.get_selected_preset();
 	const CounterTime & ct = pt_cur.get_time();
 	draw_time(sprite, y_offset, ct);
+	draw_progress_measure(sprite, y_offset, 0, COLOR_BACK_CLOCK, false);
 	draw_timer_select(sprite, y_offset);
 }
 
@@ -627,7 +634,7 @@ void drawstat_Measuring(LGFX_Sprite &sprite, int y_offset)
 	g_color_clock = COLOR_NORMAL;
 	const CounterTime & time = g_alarm_manager.get_measuring_time();
 	draw_time(sprite, y_offset, time, g_flag_blink);
-	draw_progress_measure(sprite, y_offset, x_progress);
+	draw_progress_measure(sprite, y_offset, x_progress, COLOR_BACK_NOT_SELECT, true);
 	draw_timer_select(sprite, y_offset);
 }
 
@@ -710,6 +717,7 @@ void drawstat_Stopped(LGFX_Sprite &sprite, int y_offset)
 	g_color_clock = g_flag_blink ? COLOR_STOP : COLOR_NORMAL;
 	const CounterTime & time = g_alarm_manager.get_measuring_time();
 	draw_time(sprite, y_offset, time);
+	draw_progress_measure(sprite, y_offset, 0, COLOR_STOP, false);
 	draw_timer_select(sprite, y_offset);
 }
 
@@ -810,6 +818,7 @@ void drawstat_CustomSetting(LGFX_Sprite &sprite, int y_offset)
 	PresetTime pt_cur = g_time_selector.get_selected_preset();
 	const CounterTime & ct = pt_cur.get_time();
 	draw_time(sprite, y_offset, ct);
+	draw_progress_measure(sprite, y_offset, 0, COLOR_BACK_NOT_SELECT, false);
 	draw_custom_ope_guid(sprite, y_offset);
 }
 
